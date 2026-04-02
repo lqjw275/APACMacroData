@@ -499,45 +499,64 @@ function parseBISCSV(csvText){
   const lines=csvText.trim().split('\n');
   if(lines.length<2){console.warn('BIS CSV: only',lines.length,'lines');return[];}
 
-  // Find column indices from header (handle various BIS CSV formats)
   const headers=lines[0].split(',').map(h=>h.trim().replace(/"/g,''));
-  console.log('BIS CSV headers:',headers.join(', '));
+  console.log('BIS CSV headers:',headers.slice(0,10).join(' | '));
 
-  // BIS CSV can use REF_AREA or REFERENCE_AREA or Reference area
-  const refIdx=headers.findIndex(h=>/ref.*area/i.test(h));
-  const timeIdx=headers.findIndex(h=>/time.*period/i.test(h));
-  const valIdx=headers.findIndex(h=>/obs.*value/i.test(h));
+  // Find exact columns — try common SDMX CSV column names
+  let refIdx=-1, timeIdx=-1, valIdx=-1;
+  
+  // Try exact matches first, then fuzzy
+  const refNames=['REF_AREA','REFERENCE_AREA','Reference area'];
+  const timeNames=['TIME_PERIOD','Time period','TIME'];
+  const valNames=['OBS_VALUE','Observation value','OBS'];
+  
+  for(const name of refNames){ const i=headers.indexOf(name); if(i>=0){refIdx=i;break;} }
+  for(const name of timeNames){ const i=headers.indexOf(name); if(i>=0){timeIdx=i;break;} }
+  for(const name of valNames){ const i=headers.indexOf(name); if(i>=0){valIdx=i;break;} }
+  
+  // Fuzzy fallback
+  if(refIdx<0) refIdx=headers.findIndex(h=>/^ref.*area$/i.test(h.trim()));
+  if(timeIdx<0) timeIdx=headers.findIndex(h=>/^time.*period$/i.test(h.trim()));
+  if(valIdx<0) valIdx=headers.findIndex(h=>/^obs.*val/i.test(h.trim()));
 
   if(refIdx<0||timeIdx<0||valIdx<0){
-    console.warn('BIS CSV: could not find columns. ref=',refIdx,'time=',timeIdx,'val=',valIdx);
-    console.warn('BIS CSV first line:',lines[0].substring(0,200));
+    console.warn('BIS CSV: columns not found. ref=',refIdx,'time=',timeIdx,'val=',valIdx);
+    console.warn('BIS CSV all headers:',JSON.stringify(headers));
     return[];
   }
+  
+  console.log('BIS CSV: using columns ref='+refIdx+'('+headers[refIdx]+') time='+timeIdx+'('+headers[timeIdx]+') val='+valIdx+'('+headers[valIdx]+')');
 
-  // Parse rows
   const byDate={};
-  let rowCount=0;
+  let rowCount=0, skipped=0;
   for(let i=1;i<lines.length;i++){
     if(!lines[i].trim()) continue;
+    // Handle quoted CSV fields properly
     const cols=lines[i].split(',').map(c=>c.trim().replace(/"/g,''));
     const bisCode=cols[refIdx];
-    const timePeriod=cols[timeIdx]; // e.g. "2024-01"
+    const timePeriod=cols[timeIdx];
     const val=parseFloat(cols[valIdx]);
 
-    if(!bisCode||!timePeriod||isNaN(val)) continue;
+    if(!bisCode||!timePeriod||isNaN(val)){skipped++;continue;}
 
+    // Validate: time period must match YYYY-MM or YYYY-MM-DD format
+    if(!/^\d{4}-\d{2}/.test(timePeriod)){skipped++;continue;}
+
+    // Validate: interest rate should be between -5 and 100 (not a year like 2026)
+    if(val>100||val<-5){skipped++;continue;}
+
+    // Map 2-letter BIS code to our 3-letter code
     const isoCode=BIS_COUNTRIES[bisCode];
     if(!isoCode) continue;
 
-    // Normalize date to YYYY-MM-01 format
-    const date=timePeriod.length===7?timePeriod+'-01':timePeriod;
+    const date=timePeriod.slice(0,7)+'-01';
 
     if(!byDate[date]) byDate[date]={date};
     byDate[date][isoCode]=val;
     rowCount++;
   }
 
-  console.log('BIS CSV: parsed',rowCount,'data points across',Object.keys(byDate).length,'dates');
+  console.log('BIS CSV: parsed',rowCount,'valid rows, skipped',skipped);
   return Object.values(byDate).sort((a,b)=>a.date.localeCompare(b.date));
 }
 
