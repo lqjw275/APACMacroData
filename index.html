@@ -455,53 +455,70 @@ async function fetchFredMulti(seriesMap,key){
 // ========== BIS: CENTRAL BANK POLICY RATES ==========
 async function fetchBISRates(){
   const bisCodes=Object.keys(BIS_COUNTRIES).join('+');
-  const url=`https://data.bis.org/api/v2/data/dataflow/BIS/WS_CBPOL/1.0/M.${bisCodes}?startPeriod=2010&format=csv&detail=dataonly`;
-  try{
-    const controller=new AbortController();
-    const timeout=setTimeout(()=>controller.abort(),20000);
-    const r=await fetch(url,{signal:controller.signal});
-    clearTimeout(timeout);
-    if(!r.ok){
-      console.warn('BIS HTTP '+r.status);
-      // Fallback: try v1 API
-      return await fetchBISRatesV1();
-    }
-    const text=await r.text();
-    return parseBISCSV(text);
-  }catch(e){
-    console.error('BIS v2 error:',e);
-    // Fallback: try v1 API
-    try{ return await fetchBISRatesV1(); }catch(e2){ console.error('BIS v1 also failed:',e2); return []; }
-  }
-}
+  // Use proxy to avoid CORS. Proxy maps /api/bis/* → stats.bis.org/api/*
+  const urls=[
+    `/api/bis/v2/data/dataflow/BIS/WS_CBPOL/1.0/M.${bisCodes}?format=csv&startPeriod=2010`,
+    `/api/bis/v1/data/WS_CBPOL/M.${bisCodes}?startPeriod=2010&detail=dataonly`,
+  ];
 
-async function fetchBISRatesV1(){
-  const bisCodes=Object.keys(BIS_COUNTRIES).join('+');
-  const url=`https://stats.bis.org/api/v1/data/WS_CBPOL/M.${bisCodes}?startPeriod=2010&detail=dataonly`;
-  const r=await fetch(url,{headers:{'Accept':'text/csv'}});
-  if(!r.ok) throw new Error('BIS v1 HTTP '+r.status);
-  const text=await r.text();
-  return parseBISCSV(text);
+  for(const url of urls){
+    try{
+      console.log('BIS: trying',url);
+      const controller=new AbortController();
+      const timeout=setTimeout(()=>controller.abort(),20000);
+      const r=await fetch(url,{signal:controller.signal,headers:{'Accept':'text/csv'}});
+      clearTimeout(timeout);
+      if(!r.ok){console.warn('BIS HTTP',r.status,'for',url);continue;}
+      const text=await r.text();
+      console.log('BIS: received',text.length,'chars');
+      if(text.length<50){console.warn('BIS: response too short');continue;}
+      const data=parseBISCSV(text);
+      if(data.length>0) return data;
+      console.warn('BIS: parsed 0 rows from',url);
+    }catch(e){
+      console.warn('BIS error for',url,':',e.message);
+    }
+  }
+
+  // Last resort: try direct (no proxy) in case CORS is allowed
+  try{
+    console.log('BIS: trying direct (no proxy)');
+    const bisCodes2=Object.keys(BIS_COUNTRIES).join('+');
+    const r=await fetch(`https://stats.bis.org/api/v2/data/dataflow/BIS/WS_CBPOL/1.0/M.${bisCodes2}?format=csv&startPeriod=2010`,{headers:{'Accept':'text/csv'}});
+    if(r.ok){
+      const text=await r.text();
+      const data=parseBISCSV(text);
+      if(data.length>0) return data;
+    }
+  }catch(e){console.warn('BIS direct also failed:',e.message);}
+
+  return [];
 }
 
 function parseBISCSV(csvText){
   const lines=csvText.trim().split('\n');
-  if(lines.length<2) return[];
+  if(lines.length<2){console.warn('BIS CSV: only',lines.length,'lines');return[];}
 
-  // Find column indices from header
+  // Find column indices from header (handle various BIS CSV formats)
   const headers=lines[0].split(',').map(h=>h.trim().replace(/"/g,''));
-  const refIdx=headers.findIndex(h=>h==='REF_AREA');
-  const timeIdx=headers.findIndex(h=>h==='TIME_PERIOD');
-  const valIdx=headers.findIndex(h=>h==='OBS_VALUE');
+  console.log('BIS CSV headers:',headers.join(', '));
+
+  // BIS CSV can use REF_AREA or REFERENCE_AREA or Reference area
+  const refIdx=headers.findIndex(h=>/ref.*area/i.test(h));
+  const timeIdx=headers.findIndex(h=>/time.*period/i.test(h));
+  const valIdx=headers.findIndex(h=>/obs.*value/i.test(h));
 
   if(refIdx<0||timeIdx<0||valIdx<0){
-    console.warn('BIS CSV: unexpected headers',headers);
+    console.warn('BIS CSV: could not find columns. ref=',refIdx,'time=',timeIdx,'val=',valIdx);
+    console.warn('BIS CSV first line:',lines[0].substring(0,200));
     return[];
   }
 
   // Parse rows
   const byDate={};
+  let rowCount=0;
   for(let i=1;i<lines.length;i++){
+    if(!lines[i].trim()) continue;
     const cols=lines[i].split(',').map(c=>c.trim().replace(/"/g,''));
     const bisCode=cols[refIdx];
     const timePeriod=cols[timeIdx]; // e.g. "2024-01"
@@ -512,13 +529,15 @@ function parseBISCSV(csvText){
     const isoCode=BIS_COUNTRIES[bisCode];
     if(!isoCode) continue;
 
-    // Normalize date to YYYY-MM-01 format for consistency
+    // Normalize date to YYYY-MM-01 format
     const date=timePeriod.length===7?timePeriod+'-01':timePeriod;
 
     if(!byDate[date]) byDate[date]={date};
     byDate[date][isoCode]=val;
+    rowCount++;
   }
 
+  console.log('BIS CSV: parsed',rowCount,'data points across',Object.keys(byDate).length,'dates');
   return Object.values(byDate).sort((a,b)=>a.date.localeCompare(b.date));
 }
 
@@ -532,7 +551,7 @@ function renderBISChart(data){
   if(freq==='yearly') filtered=aggregateToYearly(filtered);
 
   if(!filtered.length){
-    document.getElementById('interestRateTable').innerHTML='<div class="empty-msg">No BIS data available. <button class="key-btn" style="margin-top:8px" onclick="retryBIS()">Retry</button></div>';
+    document.getElementById('interestRateTable').innerHTML='<div class="empty-msg">No BIS data available. Open browser console (F12) for details. <button class="key-btn" style="margin-top:8px" onclick="retryBIS()">Retry</button></div>';
     return;
   }
 
@@ -767,7 +786,7 @@ async function loadAllData(){
       renderBISChart(d);
     }).catch(e=>{
       console.error('BIS IR:',e);
-      document.getElementById('interestRateTable').innerHTML='<div class="empty-msg">BIS API failed. <button class="key-btn" style="margin-top:8px" onclick="retryBIS()">Retry</button></div>';
+      document.getElementById('interestRateTable').innerHTML='<div class="empty-msg">BIS API failed to load. Make sure the site is deployed to Netlify/Vercel. Open console (F12) for details. <button class="key-btn" style="margin-top:8px" onclick="retryBIS()">Retry</button></div>';
     })
   );
 
