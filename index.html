@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>APAC Macro Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root {
+  --bg: #0b0f1a; --bg-card: #111827; --bg-card-hover: #1a2235; --bg-surface: #151d2e;
+  --border: #1e293b; --border-accent: #2d3a52; --text: #e2e8f0; --text-muted: #8896ab;
+  --text-dim: #5a6a80; --accent: #60a5fa; --accent-glow: rgba(96,165,250,0.15);
+  --green: #34d399; --red: #f87171; --radius: 10px; --radius-sm: 6px;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'DM Sans',-apple-system,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;-webkit-font-smoothing:antialiased}
+.app{max-width:1280px;margin:0 auto;padding:0 24px 40px}
+.header{padding:28px 0 20px;border-bottom:1px solid var(--border)}
+.header-content{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px}
+.header-left{display:flex;align-items:center;gap:14px}
+.header-icon{width:44px;height:44px;border-radius:var(--radius);background:linear-gradient(135deg,#60a5fa,#818cf8);display:flex;align-items:center;justify-content:center;color:white;flex-shrink:0}
+.header h1{font-size:22px;font-weight:700;letter-spacing:-0.5px}
+.subtitle{font-size:13px;color:var(--text-muted);margin-top:2px;letter-spacing:1px;font-weight:500}
+.header-right{display:flex;align-items:center;gap:12px}
+.last-update{font-size:12px;color:var(--text-dim);font-family:'JetBrains Mono',monospace}
+.status-dot{width:8px;height:8px;border-radius:50%;background:var(--green);flex-shrink:0}
+.status-dot.loading{background:var(--accent);animation:pulse 1.5s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
+.nav{display:flex;gap:4px;padding:16px 0;border-bottom:1px solid var(--border);margin-bottom:24px;overflow-x:auto}
+.nav-btn{font-family:'DM Sans',sans-serif;font-size:14px;font-weight:500;padding:8px 18px;border-radius:100px;border:1px solid transparent;background:transparent;color:var(--text-muted);cursor:pointer;transition:all 0.2s;white-space:nowrap}
+.nav-btn:hover{color:var(--text);background:var(--bg-surface)}
+.nav-btn.active{color:var(--accent);background:var(--accent-glow);border-color:rgba(96,165,250,0.25)}
+.fx-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(165px,1fr));gap:12px;margin-top:16px}
+.fx-card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:16px;transition:all 0.2s}
+.fx-card:hover{border-color:var(--border-accent);background:var(--bg-card-hover);transform:translateY(-1px)}
+.fx-card-header{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.fx-flag{font-size:20px}.fx-currency{font-size:12px;font-weight:600;color:var(--text-muted);font-family:'JetBrains Mono',monospace;letter-spacing:0.5px}
+.fx-rate{font-size:22px;font-weight:700;font-family:'JetBrains Mono',monospace;letter-spacing:-0.5px}
+.fx-country{font-size:12px;color:var(--text-dim);margin-top:4px}
+.chart-section{margin-top:32px}
+.chart-header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:20px}
+.section-title{font-size:16px;font-weight:600;letter-spacing:-0.3px}
+.chart-container{position:relative;height:420px;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:20px}
+.currency-toggle,.time-toggle,.freq-toggle{display:flex;flex-wrap:wrap;gap:6px}
+.freq-toggle{border-left:1px solid var(--border);padding-left:10px;margin-left:4px}
+.toggle-btn{font-family:'DM Sans',sans-serif;font-size:12px;font-weight:500;padding:5px 12px;border-radius:100px;border:1px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer;transition:all 0.2s}
+.toggle-btn:hover{border-color:var(--border-accent);color:var(--text)}
+.toggle-btn.active{background:var(--accent-glow);border-color:rgba(96,165,250,0.3);color:var(--accent)}
+.table-title{font-size:14px;font-weight:600;color:var(--text-muted);margin:32px 0 12px;text-transform:uppercase;letter-spacing:0.5px}
+.table-wrapper{overflow-x:auto;border-radius:var(--radius);border:1px solid var(--border)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;padding:10px 14px;background:var(--bg-surface);color:var(--text-muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid var(--border);white-space:nowrap}
+td{padding:10px 14px;border-bottom:1px solid var(--border);font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text-muted);white-space:nowrap}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:rgba(255,255,255,0.02)}
+td.positive{color:var(--green)}td.negative{color:var(--red)}
+.country-cell{font-family:'DM Sans',sans-serif;font-weight:500;color:var(--text)}
+.note{font-size:12px;color:var(--text-dim);margin-top:12px;font-style:italic}
+.footer{margin-top:40px;padding-top:20px;border-top:1px solid var(--border);text-align:center}
+.footer p{font-size:12px;color:var(--text-dim);letter-spacing:0.3px}
+.spinner{width:28px;height:28px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 0.8s linear infinite;margin:0 auto}
+@keyframes spin{to{transform:rotate(360deg)}}
+.tab-content{display:none}.tab-content.active{display:block;animation:fadeIn 0.3s ease}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.key-section{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-bottom:16px}
+.key-row{display:flex;gap:10px;margin-top:10px;align-items:center;flex-wrap:wrap}
+.key-input{font-family:'JetBrains Mono',monospace;font-size:13px;padding:8px 14px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg-surface);color:var(--text);flex:1;min-width:200px;outline:none}
+.key-input:focus{border-color:var(--accent)}
+.key-btn{font-family:'DM Sans',sans-serif;font-size:13px;font-weight:600;padding:8px 20px;border-radius:var(--radius-sm);border:none;background:var(--accent);color:#0b0f1a;cursor:pointer;transition:all 0.2s}
+.key-btn:hover{background:#93c5fd}
+.key-status{font-size:12px;color:var(--green);margin-top:8px}.key-status.error{color:var(--red)}
+.rate-type-label{display:inline-block;font-size:10px;padding:2px 6px;border-radius:4px;background:rgba(96,165,250,0.1);color:var(--accent);font-weight:500}
+.empty-msg{padding:40px;text-align:center;color:var(--text-dim)}
+.controls-row{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.error-banner{background:rgba(248,113,113,0.08);border:1px solid rgba(248,113,113,0.2);border-radius:var(--radius);padding:12px 16px;margin-bottom:16px;font-size:13px;color:var(--red)}
+@media(max-width:768px){.app{padding:0 16px 32px}.header h1{font-size:18px}.fx-cards{grid-template-columns:repeat(2,1fr)}.chart-header{flex-direction:column;align-items:flex-start}.header-right{display:none}.chart-container{height:320px;padding:12px}}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="header">
+    <div class="header-content">
+      <div class="header-left">
+        <div class="header-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div>
+        <div><h1>APAC Macro Dashboard</h1><p class="subtitle">SG · JP · AU · KR · ID · PH · VN · MY</p></div>
+      </div>
+      <div class="header-right">
+        <span class="last-update" id="lastUpdate"></span>
+        <span class="status-dot" id="statusDot"></span>
+      </div>
+    </div>
+  </header>
+
+  <div id="keysSection" style="margin-top:20px">
+    <div class="key-section">
+      <strong style="color:var(--accent)">1. ExchangeRate-API key</strong>
+      <p style="color:var(--text-muted);font-size:13px;margin-top:4px">For live FX rates. Free at <a href="https://www.exchangerate-api.com/" target="_blank" style="color:var(--accent)">exchangerate-api.com</a></p>
+      <div class="key-row"><input type="text" class="key-input" id="fxKeyInput" placeholder="Paste ExchangeRate-API key..."></div>
+      <div id="fxKeyStatus"></div>
+    </div>
+    <div class="key-section">
+      <strong style="color:var(--accent)">2. FRED API key</strong>
+      <p style="color:var(--text-muted);font-size:13px;margin-top:4px">For monthly interest rates &amp; inflation. Free at <a href="https://fred.stlouisfed.org/docs/api/api_key.html" target="_blank" style="color:var(--accent)">fred.stlouisfed.org</a></p>
+      <div class="key-row"><input type="text" class="key-input" id="fredKeyInput" placeholder="Paste FRED API key..."></div>
+      <div id="fredKeyStatus"></div>
+    </div>
+    <button class="key-btn" style="margin-top:8px;width:100%;padding:12px;font-size:14px" onclick="loadAllData()">Load Dashboard →</button>
+    <p class="note" style="margin-top:12px;text-align:center">Keys are saved in your browser. Dashboard must be deployed to Netlify or Vercel for FRED data (proxy required).</p>
+  </div>
+
+  <div id="errorBanner" class="error-banner" style="display:none"></div>
+
+  <nav class="nav" id="mainNav" style="display:none">
+    <button class="nav-btn active" onclick="switchTab('fx',this)">FX Rates</button>
+    <button class="nav-btn" onclick="switchTab('inflation',this)">Inflation</button>
+    <button class="nav-btn" onclick="switchTab('interestRate',this)">Interest Rate</button>
+    <button class="nav-btn" onclick="switchTab('gdpGrowth',this)">GDP Growth</button>
+  </nav>
+
+  <!-- FX -->
+  <div class="tab-content" id="tab-fx">
+    <h2 class="section-title">Live EUR Exchange Rates</h2>
+    <div class="fx-cards" id="fxCards"></div>
+    <div class="chart-section">
+      <div class="chart-header">
+        <h2 class="section-title">EUR/APAC Trend</h2>
+        <div class="controls-row">
+          <div class="time-toggle" id="fxTimeToggle"></div>
+          <div class="freq-toggle" id="fxFreqToggle"></div>
+          <div class="currency-toggle" id="fxToggle"></div>
+        </div>
+      </div>
+      <div class="chart-container"><canvas id="fxChart"></canvas></div>
+      <p class="note">Source: ECB via Frankfurter. Some currencies (VND, PHP) may not be available historically.</p>
+    </div>
+  </div>
+
+  <!-- Inflation -->
+  <div class="tab-content" id="tab-inflation">
+    <div class="chart-header">
+      <h2 class="section-title">CPI Inflation — YoY (%)</h2>
+      <div class="controls-row">
+        <div class="time-toggle" id="inflationTimeToggle"></div>
+        <div class="freq-toggle" id="inflationFreqToggle"></div>
+      </div>
+    </div>
+    <div class="chart-container"><canvas id="inflationChart"></canvas></div>
+    <h3 class="table-title" id="inflationTableTitle">Latest 12 Months</h3>
+    <div class="table-wrapper" id="inflationTable"><div class="empty-msg">Loading...</div></div>
+    <p class="note">Source: FRED (OECD Main Economic Indicators — CPI YoY Growth Rate). Not all countries have OECD monthly CPI coverage.</p>
+  </div>
+
+  <!-- Interest Rate -->
+  <div class="tab-content" id="tab-interestRate">
+    <div class="chart-header">
+      <h2 class="section-title">Policy / Interbank Rate (%)</h2>
+      <div class="controls-row">
+        <div class="time-toggle" id="irTimeToggle"></div>
+        <div class="freq-toggle" id="irFreqToggle"></div>
+      </div>
+    </div>
+    <div class="chart-container"><canvas id="interestRateChart"></canvas></div>
+    <h3 class="table-title" id="irTableTitle">Latest 12 Months</h3>
+    <div class="table-wrapper" id="interestRateTable"><div class="empty-msg">Loading...</div></div>
+    <p class="note">Source: FRED — JP/AU/KR use OECD 3-month interbank rate (current through 2026). ID/SG/PH/MY/VN use IMF policy rate. Some countries may have limited coverage.</p>
+  </div>
+
+  <!-- GDP -->
+  <div class="tab-content" id="tab-gdpGrowth">
+    <div class="chart-header">
+      <h2 class="section-title">GDP Growth (Annual %)</h2>
+      <div class="time-toggle" id="gdpTimeToggle"></div>
+    </div>
+    <div class="chart-container"><canvas id="gdpGrowthChart"></canvas></div>
+    <h3 class="table-title">Latest Data</h3>
+    <div class="table-wrapper" id="gdpGrowthTable"></div>
+    <p class="note">Source: World Bank Open Data</p>
+  </div>
+
+  <footer class="footer"><p>Data: World Bank · FRED/OECD · ECB (Frankfurter) · ExchangeRate-API</p></footer>
+</div>
+
+<script>
+// ========== CONFIG ==========
+const C = {
+  SGP:{name:'Singapore',currency:'SGD',flag:'🇸🇬'},JPN:{name:'Japan',currency:'JPY',flag:'🇯🇵'},
+  AUS:{name:'Australia',currency:'AUD',flag:'🇦🇺'},KOR:{name:'South Korea',currency:'KRW',flag:'🇰🇷'},
+  IDN:{name:'Indonesia',currency:'IDR',flag:'🇮🇩'},PHL:{name:'Philippines',currency:'PHP',flag:'🇵🇭'},
+  VNM:{name:'Vietnam',currency:'VND',flag:'🇻🇳'},MYS:{name:'Malaysia',currency:'MYR',flag:'🇲🇾'},
+};
+const CLR={SGP:'#e74c3c',JPN:'#3498db',AUS:'#2ecc71',KOR:'#9b59b6',IDN:'#f39c12',PHL:'#1abc9c',VNM:'#e67e22',MYS:'#34495e'};
+const FX_CUR=['SGD','JPY','AUD','KRW','IDR','PHP','VND','MYR'];
+const WB='SGP;JPN;AUS;KOR;IDN;PHL;VNM;MYS';
+const CODES=Object.keys(C);
+
+// FRED: Interest rate series
+// IR3TIB01 = 3-month interbank (OECD, current through 2025-2026)
+// INTDSR = IMF discount/policy rate (covers non-OECD countries)
+// IRSTCB01 series were discontinued Dec 2023 — do NOT use
+const FRED_IR={
+  JPN:{id:'IR3TIB01JPM156N',type:'3M Interbank'},
+  AUS:{id:'IR3TIB01AUM156N',type:'3M Interbank'},
+  KOR:{id:'IR3TIB01KRM156N',type:'3M Interbank'},
+  IDN:{id:'INTDSRIDM193N',type:'IMF Policy Rate'},
+  SGP:{id:'INTDSRSGM193N',type:'IMF Policy Rate'},
+  PHL:{id:'INTDSRPHM193N',type:'IMF Policy Rate'},
+  MYS:{id:'INTDSRMYM193N',type:'IMF Policy Rate'},
+  VNM:{id:'INTDSRVNM193N',type:'IMF Policy Rate'},
+};
+
+// FRED: Monthly CPI inflation (YoY growth rate from OECD)
+const FRED_CPI={
+  SGP:'CPALTT01SGM659N',JPN:'CPALTT01JPM659N',AUS:'CPALTT01AUQ659N',
+  KOR:'CPALTT01KRM659N',IDN:'CPALTT01IDM659N',
+  // PHL, VNM, MYS — not in OECD MEI, may return empty
+  PHL:'CPALTT01PHM659N',VNM:'CPALTT01VNM659N',MYS:'CPALTT01MYM659N',
+};
+
+let charts={}, fxHistData=null, selFxCur=['SGD','JPY','AUD','MYR'];
+
+// All FRED data stored globally for time filtering
+let fredIRData=[], fredCPIData=[], wbGDPData=[];
+
+// Time periods
+const TIME_OPTS=[
+  {label:'1Y',months:12},{label:'3Y',months:36},{label:'5Y',months:60},{label:'10Y',months:120},{label:'All',months:9999}
+];
+let timeSelections={fx:'5Y',inflation:'5Y',ir:'5Y',gdp:'All'};
+
+// Frequency selections
+const FREQ_FX=[{label:'Daily',key:'daily'},{label:'Monthly',key:'monthly'},{label:'Yearly',key:'yearly'}];
+const FREQ_MACRO=[{label:'Monthly',key:'monthly'},{label:'Yearly',key:'yearly'}];
+let freqSelections={fx:'daily',inflation:'monthly',ir:'monthly'};
+
+// ========== UTILS ==========
+function switchTab(id,btn){
+  document.querySelectorAll('.tab-content').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
+  document.getElementById('tab-'+id).classList.add('active');
+  btn.classList.add('active');
+}
+
+function showError(msg){
+  const el=document.getElementById('errorBanner');
+  el.textContent=msg;el.style.display='block';
+  setTimeout(()=>{el.style.display='none';},10000);
+}
+
+function filterByTime(data,months,dateKey='date'){
+  if(months>=9999)return data;
+  const cutoff=new Date();cutoff.setMonth(cutoff.getMonth()-months);
+  const cutStr=cutoff.toISOString().split('T')[0];
+  return data.filter(d=>d[dateKey]>=cutStr);
+}
+
+function filterByTimeYear(data,months){
+  if(months>=9999)return data;
+  const cutoffYear=new Date().getFullYear()-Math.ceil(months/12);
+  return data.filter(d=>d.year>=cutoffYear);
+}
+
+function buildTimeToggle(containerId,tabKey,onchange){
+  const el=document.getElementById(containerId);
+  el.innerHTML=TIME_OPTS.map(o=>
+    `<button class="toggle-btn ${timeSelections[tabKey]===o.label?'active':''}" onclick="setTime('${tabKey}','${o.label}',this)">${o.label}</button>`
+  ).join('');
+}
+
+function setTime(tabKey,label,btn){
+  timeSelections[tabKey]=label;
+  btn.parentElement.querySelectorAll('.toggle-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  // Re-render the relevant chart
+  if(tabKey==='fx') renderFxChart();
+  if(tabKey==='ir') renderFredChart('interestRateChart',fredIRData,'ir','interestRateTable',FRED_IR);
+  if(tabKey==='inflation') renderFredChart('inflationChart',fredCPIData,'inflation','inflationTable',null);
+  if(tabKey==='gdp') renderGDP();
+}
+
+function getMonths(tabKey){
+  const sel=timeSelections[tabKey];
+  const opt=TIME_OPTS.find(o=>o.label===sel);
+  return opt?opt.months:9999;
+}
+
+// ========== FREQUENCY TOGGLE ==========
+function buildFreqToggle(containerId,tabKey,options){
+  const el=document.getElementById(containerId);
+  el.innerHTML=options.map(o=>
+    `<button class="toggle-btn ${freqSelections[tabKey]===o.key?'active':''}" onclick="setFreq('${tabKey}','${o.key}',this)">${o.label}</button>`
+  ).join('');
+}
+
+function setFreq(tabKey,freq,btn){
+  freqSelections[tabKey]=freq;
+  btn.parentElement.querySelectorAll('.toggle-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  if(tabKey==='fx') renderFxChart();
+  if(tabKey==='ir') renderFredChart('interestRateChart',fredIRData,'ir','interestRateTable',FRED_IR);
+  if(tabKey==='inflation') renderFredChart('inflationChart',fredCPIData,'inflation','inflationTable',null);
+}
+
+// Aggregate monthly FRED data → yearly (average per year)
+function aggregateToYearly(data){
+  const byYear={};
+  data.forEach(row=>{
+    const yr=row.date.slice(0,4);
+    if(!byYear[yr])byYear[yr]={date:yr,_counts:{}};
+    CODES.forEach(c=>{
+      if(row[c]!=null){
+        if(byYear[yr][c]==null){byYear[yr][c]=0;byYear[yr]._counts[c]=0;}
+        byYear[yr][c]+=row[c];
+        byYear[yr]._counts[c]++;
+      }
+    });
+  });
+  return Object.values(byYear).map(row=>{
+    const out={date:row.date};
+    CODES.forEach(c=>{
+      out[c]=row._counts[c]?parseFloat((row[c]/row._counts[c]).toFixed(2)):null;
+    });
+    return out;
+  }).sort((a,b)=>a.date.localeCompare(b.date));
+}
+
+// Aggregate daily FX data → monthly (last value per month)
+function aggregateFxToMonthly(dates,rates,currencies){
+  const byMonth={};
+  dates.forEach(d=>{
+    const ym=d.slice(0,7); // YYYY-MM
+    byMonth[ym]=d; // keep last date per month
+  });
+  const monthDates=Object.values(byMonth).sort();
+  return {dates:monthDates.map(d=>d.slice(0,7)),ratesByLabel:monthDates.map(d=>rates[d]||{})};
+}
+
+// Aggregate daily FX data → yearly (last value per year)
+function aggregateFxToYearly(dates,rates,currencies){
+  const byYear={};
+  dates.forEach(d=>{
+    const yr=d.slice(0,4);
+    byYear[yr]=d; // keep last date per year
+  });
+  const yearDates=Object.values(byYear).sort();
+  return {dates:yearDates.map(d=>d.slice(0,4)),ratesByLabel:yearDates.map(d=>rates[d]||{})};
+}
+
+// ========== FX ==========
+async function fetchLiveFX(key){
+  if(!key)return;
+  try{
+    const r=await fetch('https://v6.exchangerate-api.com/v6/'+key+'/latest/EUR');
+    const d=await r.json();
+    if(d.result==='error')return;
+    document.getElementById('lastUpdate').textContent='FX: '+new Date(d.time_last_update_utc).toLocaleDateString('en-SG',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
+    let h='';
+    FX_CUR.forEach(c=>{
+      const rate=d.conversion_rates[c],co=Object.values(C).find(v=>v.currency===c);
+      if(rate&&co)h+=`<div class="fx-card"><div class="fx-card-header"><span class="fx-flag">${co.flag}</span><span class="fx-currency">EUR/${c}</span></div><div class="fx-rate">${rate.toFixed(4)}</div><div class="fx-country">${co.name}</div></div>`;
+    });
+    document.getElementById('fxCards').innerHTML=h;
+  }catch(e){console.error('FX:',e);}
+}
+
+async function fetchHistFX(){
+  const end=new Date(),start=new Date();start.setFullYear(start.getFullYear()-10); // fetch 10 years
+  const fmt=d=>d.toISOString().split('T')[0];
+  try{
+    const r=await fetch(`https://api.frankfurter.app/${fmt(start)}..${fmt(end)}?from=EUR&to=${FX_CUR.join(',')}`);
+    const d=await r.json(),dates=Object.keys(d.rates).sort(),avail=Object.keys(d.rates[dates[0]]||{});
+    fxHistData={dates,rates:d.rates,avail};
+    buildFxCurrencyToggle(avail);
+    buildTimeToggle('fxTimeToggle','fx');
+    renderFxChart();
+  }catch(e){console.error('Hist FX:',e);}
+}
+
+function buildFxCurrencyToggle(avail){
+  let h='';FX_CUR.forEach(c=>{
+    const co=Object.values(C).find(v=>v.currency===c),ok=avail.includes(c),on=selFxCur.includes(c)&&ok;
+    h+=`<button class="toggle-btn ${on?'active':''}" ${ok?'':'disabled style="opacity:0.3"'} onclick="toggleFxCur('${c}',this)">${co?.flag||''} ${c}</button>`;
+  });document.getElementById('fxToggle').innerHTML=h;
+}
+
+function toggleFxCur(c,btn){
+  if(selFxCur.includes(c)){if(selFxCur.length>1){selFxCur=selFxCur.filter(x=>x!==c);btn.classList.remove('active');}}
+  else{selFxCur.push(c);btn.classList.add('active');}
+  renderFxChart();
+}
+
+function renderFxChart(){
+  if(!fxHistData)return;
+  const months=getMonths('fx');
+  const freq=freqSelections.fx;
+  const filteredDates=filterByTime(fxHistData.dates.map(d=>({date:d})),months).map(d=>d.date);
+  const active=selFxCur.filter(c=>fxHistData.avail.includes(c));
+
+  let chartLabels, chartRatesArr;
+
+  if(freq==='monthly'){
+    const agg=aggregateFxToMonthly(filteredDates,fxHistData.rates,active);
+    chartLabels=agg.dates;chartRatesArr=agg.ratesByLabel;
+  } else if(freq==='yearly'){
+    const agg=aggregateFxToYearly(filteredDates,fxHistData.rates,active);
+    chartLabels=agg.dates;chartRatesArr=agg.ratesByLabel;
+  } else {
+    chartLabels=filteredDates;chartRatesArr=filteredDates.map(d=>fxHistData.rates[d]||{});
+  }
+
+  const ds=active.map(cur=>{
+    const ce=Object.entries(C).find(([,v])=>v.currency===cur),code=ce?ce[0]:cur;
+    return{label:`${C[code]?.flag||''} ${cur}`,data:chartRatesArr.map(r=>r[cur]??null),borderColor:CLR[code]||'#999',backgroundColor:'transparent',borderWidth:2,pointRadius:freq==='yearly'?4:0,pointHitRadius:10,tension:0.3,spanGaps:true};
+  });
+  if(charts.fx)charts.fx.destroy();
+  const xFmt=freq==='daily'?(v=>{const d=new Date(v);return d.getDate()+'/'+(d.getMonth()+1);}):
+              freq==='monthly'?(v=>v):  // YYYY-MM already readable
+              (v=>v); // yearly: just year
+  charts.fx=new Chart(document.getElementById('fxChart'),{type:'line',data:{labels:chartLabels,datasets:ds},options:chartOpts(xFmt,v=>v?.toFixed(4),freq==='daily'?12:undefined)});
+}
+
+// ========== FRED FETCH (via proxy) ==========
+async function fredFetch(seriesId,key){
+  // Use proxy path (Netlify/Vercel will proxy /api/fred/* to FRED API)
+  const url=`/api/fred/series/observations?series_id=${seriesId}&api_key=${key}&file_type=json&observation_start=2010-01-01&sort_order=asc`;
+  try{
+    const controller=new AbortController();
+    const timeout=setTimeout(()=>controller.abort(),15000); // 15s timeout
+    const r=await fetch(url,{signal:controller.signal});
+    clearTimeout(timeout);
+    if(!r.ok){console.warn(`FRED ${seriesId}: HTTP ${r.status}`);return[];}
+    const d=await r.json();
+    if(d.error_code||d.error_message){console.warn(`FRED ${seriesId}:`,d.error_message);return[];}
+    return(d.observations||[]).filter(o=>o.value!=='.').map(o=>({date:o.date,value:parseFloat(o.value)}));
+  }catch(e){
+    if(e.name==='AbortError')console.warn(`FRED ${seriesId}: timeout`);
+    else console.error(`FRED ${seriesId}:`,e);
+    return[];
+  }
+}
+
+async function fetchFredMulti(seriesMap,key){
+  const codes=Object.keys(seriesMap);
+  const results=await Promise.all(codes.map(c=>{
+    const sid=typeof seriesMap[c]==='object'?seriesMap[c].id:seriesMap[c];
+    return fredFetch(sid,key).then(data=>({code:c,data}));
+  }));
+  const allDates=new Set();
+  results.forEach(r=>r.data.forEach(d=>allDates.add(d.date)));
+  const sorted=[...allDates].sort();
+  return sorted.map(date=>{
+    const row={date};
+    results.forEach(r=>{const m=r.data.find(d=>d.date===date);row[r.code]=m?m.value:null;});
+    return row;
+  });
+}
+
+// ========== RENDER FRED DATA ==========
+function renderFredChart(canvasId,data,timeKey,tableId,typeMap){
+  const months=getMonths(timeKey);
+  const freq=freqSelections[timeKey]||'monthly';
+  let filtered=filterByTime(data,months);
+
+  // Aggregate to yearly if selected
+  if(freq==='yearly') filtered=aggregateToYearly(filtered);
+
+  if(!filtered.length){
+    document.getElementById(tableId).innerHTML='<div class="empty-msg">No data available. Ensure FRED API key is valid and site is deployed to Netlify/Vercel.</div>';
+    return;
+  }
+
+  const isYearly=freq==='yearly';
+  const labels=filtered.map(d=>d.date);
+  const ds=CODES.map(code=>({
+    label:`${C[code].flag} ${C[code].name}`,
+    data:filtered.map(d=>d[code]??null),borderColor:CLR[code],backgroundColor:'transparent',
+    borderWidth:2,pointRadius:isYearly?4:0,pointHitRadius:10,tension:0.3,spanGaps:true
+  }));
+  if(charts[canvasId])charts[canvasId].destroy();
+
+  const xFmt=isYearly?(v=>v):(v=>{if(!v)return'';const p=v.split('-');return p[1]+'/'+p[0].slice(2);});
+  charts[canvasId]=new Chart(document.getElementById(canvasId),{type:'line',data:{labels,datasets:ds},options:chartOpts(xFmt,v=>v?.toFixed(2)+'%',isYearly?undefined:18)});
+
+  // Update table title
+  const titleEl=document.getElementById(timeKey==='ir'?'irTableTitle':'inflationTableTitle');
+  if(titleEl) titleEl.textContent=isYearly?'Yearly Averages':'Latest 12 Months';
+
+  // Table: show last N entries
+  const tableSlice=isYearly?filtered.slice(-10):filtered.slice(-12);
+  let h='<table><thead><tr><th>Country</th>';
+  if(typeMap)h+='<th>Type</th>';
+  tableSlice.forEach(d=>{
+    if(isYearly){h+=`<th>${d.date}</th>`;}
+    else{const p=d.date.split('-');h+=`<th>${p[1]}/${p[0].slice(2)}</th>`;}
+  });
+  h+='</tr></thead><tbody>';
+  CODES.forEach(c=>{
+    h+=`<tr><td class="country-cell">${C[c].flag} ${C[c].name}</td>`;
+    if(typeMap)h+=`<td><span class="rate-type-label">${typeMap[c].type}</span></td>`;
+    tableSlice.forEach(d=>{
+      const v=d[c];const cls=v!=null?(v>=0?'positive':'negative'):'';
+      h+=`<td class="${cls}">${v!=null?v.toFixed(2)+'%':'—'}</td>`;
+    });
+    h+='</tr>';
+  });
+  h+='</tbody></table>';
+  document.getElementById(tableId).innerHTML=h;
+}
+
+// ========== WORLD BANK (GDP) ==========
+async function fetchWB(indicator){
+  const yr=new Date().getFullYear();
+  try{
+    const r=await fetch(`https://api.worldbank.org/v2/country/${WB}/indicator/${indicator}?format=json&per_page=500&date=2000:${yr}`);
+    const d=await r.json();if(!d[1])return[];
+    return d[1].filter(x=>x.value!==null).map(x=>({country:x.countryiso3code,year:parseInt(x.date),value:parseFloat(x.value.toFixed(2))}));
+  }catch(e){console.error('WB:',e);return[];}
+}
+
+function pivotByYear(raw){
+  const years=[...new Set(raw.map(d=>d.year))].sort();
+  return years.map(y=>{const row={year:y};CODES.forEach(c=>{const e=raw.find(d=>d.year===y&&d.country===c);row[c]=e?e.value:null;});return row;});
+}
+
+function renderGDP(){
+  if(!wbGDPData.length)return;
+  const months=getMonths('gdp');
+  const filtered=filterByTimeYear(wbGDPData,months);
+  const ds=CODES.map(c=>({label:`${C[c].flag} ${C[c].name}`,data:filtered.map(d=>d[c]),borderColor:CLR[c],backgroundColor:'transparent',borderWidth:2,pointRadius:0,pointHitRadius:10,tension:0.3,spanGaps:true}));
+  if(charts.gdp)charts.gdp.destroy();
+  charts.gdp=new Chart(document.getElementById('gdpGrowthChart'),{type:'line',data:{labels:filtered.map(d=>d.year),datasets:ds},options:chartOpts(null,v=>v?.toFixed(1)+'%')});
+
+  // Table
+  const latest=filtered.slice(-5);
+  let h='<table><thead><tr><th>Country</th>';
+  latest.forEach(d=>{h+=`<th>${d.year}</th>`;});h+='</tr></thead><tbody>';
+  CODES.forEach(c=>{
+    h+=`<tr><td class="country-cell">${C[c].flag} ${C[c].name}</td>`;
+    latest.forEach(d=>{const v=d[c];const cls=v!=null?(v>=0?'positive':'negative'):'';h+=`<td class="${cls}">${v!=null?v.toFixed(1)+'%':'—'}</td>`;});
+    h+='</tr>';
+  });
+  h+='</tbody></table>';
+  document.getElementById('gdpGrowthTable').innerHTML=h;
+}
+
+// ========== SHARED CHART OPTIONS ==========
+function chartOpts(xFormatter,tooltipFormatter,maxTicks){
+  const opts={responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+    plugins:{
+      legend:{labels:{color:'#8896ab',font:{family:"'DM Sans'",size:12}}},
+      tooltip:{backgroundColor:'#111827',borderColor:'#2d3a52',borderWidth:1,titleColor:'#e2e8f0',bodyColor:'#8896ab',titleFont:{family:"'JetBrains Mono'",size:12},bodyFont:{family:"'JetBrains Mono'",size:11},
+        callbacks:{label:ctx=>' '+ctx.dataset.label+': '+(tooltipFormatter?tooltipFormatter(ctx.parsed.y):ctx.parsed.y)}}
+    },
+    scales:{
+      x:{ticks:{color:'#8896ab',font:{size:11},maxTicksLimit:maxTicks||12},grid:{color:'rgba(255,255,255,0.04)'}},
+      y:{ticks:{color:'#8896ab',font:{size:11},callback:v=>v+'%'},grid:{color:'rgba(255,255,255,0.04)'}}
+    }
+  };
+  if(xFormatter)opts.scales.x.ticks.callback=function(v){return xFormatter(this.getLabelForValue(v));};
+  return opts;
+}
+
+// ========== INIT ==========
+// ===== HARDCODED API KEYS =====
+// Paste your keys between the quotes below. Leave empty to show the key entry form.
+const HARDCODED_FX_KEY = '54a343954f94a449c3ae6df7';   // e.g. 'a1b2c3d4e5f6g7h8'
+const HARDCODED_FRED_KEY = '5cdd5e9893443456368bba918c08cf81'; // e.g. 'x9y8z7w6v5u4t3s2'
+
+(function(){
+  const fxKey = HARDCODED_FX_KEY || localStorage.getItem('fx_api_key') || '';
+  const fredKey = HARDCODED_FRED_KEY || localStorage.getItem('fred_api_key') || '';
+  if(fxKey) document.getElementById('fxKeyInput').value = fxKey;
+  if(fredKey) document.getElementById('fredKeyInput').value = fredKey;
+  if(fxKey || fredKey) loadAllData();
+})();
+
+async function loadAllData(){
+  const fxKey = HARDCODED_FX_KEY || document.getElementById('fxKeyInput').value.trim();
+  const fredKey = HARDCODED_FRED_KEY || document.getElementById('fredKeyInput').value.trim();
+  if(fxKey) localStorage.setItem('fx_api_key',fxKey);
+  if(fredKey) localStorage.setItem('fred_api_key',fredKey);
+
+  document.getElementById('keysSection').style.display='none';
+  document.getElementById('mainNav').style.display='flex';
+  document.getElementById('tab-fx').classList.add('active');
+  document.getElementById('statusDot').className='status-dot loading';
+
+  // Build time toggles
+  buildTimeToggle('fxTimeToggle','fx');
+  buildTimeToggle('inflationTimeToggle','inflation');
+  buildTimeToggle('irTimeToggle','ir');
+  buildTimeToggle('gdpTimeToggle','gdp');
+
+  // Build frequency toggles
+  buildFreqToggle('fxFreqToggle','fx',FREQ_FX);
+  buildFreqToggle('inflationFreqToggle','inflation',FREQ_MACRO);
+  buildFreqToggle('irFreqToggle','ir',FREQ_MACRO);
+
+  // Parallel fetch
+  const tasks=[];
+  tasks.push(fetchHistFX());
+  if(fxKey)tasks.push(fetchLiveFX(fxKey));
+
+  // World Bank GDP
+  tasks.push(fetchWB('NY.GDP.MKTP.KD.ZG').then(raw=>{
+    wbGDPData=pivotByYear(raw);renderGDP();
+  }));
+
+  // FRED data (interest rates + inflation)
+  if(fredKey){
+    tasks.push(
+      fetchFredMulti(FRED_IR,fredKey).then(d=>{
+        fredIRData=d;
+        renderFredChart('interestRateChart',d,'ir','interestRateTable',FRED_IR);
+      }).catch(e=>{
+        console.error('FRED IR:',e);
+        showError('FRED interest rate fetch failed. Make sure the site is deployed to Netlify/Vercel (FRED requires server-side proxy).');
+      })
+    );
+    tasks.push(
+      fetchFredMulti(FRED_CPI,fredKey).then(d=>{
+        fredCPIData=d;
+        renderFredChart('inflationChart',d,'inflation','inflationTable',null);
+      }).catch(e=>{
+        console.error('FRED CPI:',e);
+      })
+    );
+  } else {
+    document.getElementById('interestRateTable').innerHTML='<div class="empty-msg">Add a FRED API key for monthly data.</div>';
+    document.getElementById('inflationTable').innerHTML='<div class="empty-msg">Add a FRED API key for monthly inflation data.</div>';
+  }
+
+  await Promise.allSettled(tasks);
+  document.getElementById('statusDot').className='status-dot';
+}
+</script>
+</body>
+</html>
