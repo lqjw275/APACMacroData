@@ -8,6 +8,12 @@
   force = true
 
 [[redirects]]
+  from = "/api/bis/*"
+  to = "https://stats.bis.org/api/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200

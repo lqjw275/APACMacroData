@@ -2,6 +2,7 @@
   "buildCommand": "",
   "outputDirectory": ".",
   "rewrites": [
-    { "source": "/api/fred/:path*", "destination": "https://api.stlouisfed.org/fred/:path*" }
+    { "source": "/api/fred/:path*", "destination": "https://api.stlouisfed.org/fred/:path*" },
+    { "source": "/api/bis/:path*", "destination": "https://stats.bis.org/api/:path*" }
   ]
 }
