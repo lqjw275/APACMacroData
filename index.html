@@ -165,7 +165,7 @@ td.positive{color:var(--green)}td.negative{color:var(--red)}
     <div class="chart-container"><canvas id="interestRateChart"></canvas></div>
     <h3 class="table-title" id="irTableTitle">Latest 12 Months</h3>
     <div class="table-wrapper" id="interestRateTable"><div class="empty-msg">Loading...</div></div>
-    <p class="note">Source: FRED — JP/AU/KR use OECD 3-month interbank rate (current through 2026). ID/SG/PH/MY/VN use IMF policy rate. Some countries may have limited coverage.</p>
+    <p class="note">Source: Bank for International Settlements (BIS) — Central bank policy rates. Updated weekly. No API key required.</p>
   </div>
 
   <!-- GDP -->
@@ -180,7 +180,7 @@ td.positive{color:var(--green)}td.negative{color:var(--red)}
     <p class="note">Source: World Bank Open Data</p>
   </div>
 
-  <footer class="footer"><p>Data: World Bank · FRED/OECD · ECB (Frankfurter) · ExchangeRate-API</p></footer>
+  <footer class="footer"><p>Data: BIS · World Bank · FRED/OECD · ECB (Frankfurter) · ExchangeRate-API</p></footer>
 </div>
 
 <script>
@@ -196,19 +196,14 @@ const FX_CUR=['SGD','JPY','AUD','KRW','IDR','PHP','VND','MYR'];
 const WB='SGP;JPN;AUS;KOR;IDN;PHL;VNM;MYS';
 const CODES=Object.keys(C);
 
-// FRED: Interest rate series
-// IR3TIB01 = 3-month interbank (OECD, current through 2025-2026)
-// INTDSR = IMF discount/policy rate (covers non-OECD countries)
-// IRSTCB01 series were discontinued Dec 2023 — do NOT use
-const FRED_IR={
-  JPN:{id:'IR3TIB01JPM156N',type:'3M Interbank'},
-  AUS:{id:'IR3TIB01AUM156N',type:'3M Interbank'},
-  KOR:{id:'IR3TIB01KRM156N',type:'3M Interbank'},
-  IDN:{id:'INTDSRIDM193N',type:'IMF Policy Rate'},
-  SGP:{id:'INTDSRSGM193N',type:'IMF Policy Rate'},
-  PHL:{id:'INTDSRPHM193N',type:'IMF Policy Rate'},
-  MYS:{id:'INTDSRMYM193N',type:'IMF Policy Rate'},
-  VNM:{id:'INTDSRVNM193N',type:'IMF Policy Rate'},
+// BIS: Central bank policy rates (free, no key, no proxy needed)
+// Uses 2-letter ISO codes; map to our 3-letter codes
+const BIS_COUNTRIES = {
+  JP:'JPN', AU:'AUS', KR:'KOR', ID:'IDN', PH:'PHL', MY:'MYS', SG:'SGP', VN:'VNM'
+};
+const BIS_COUNTRY_LABELS = {
+  JPN:'Policy Rate', AUS:'Policy Rate', KOR:'Policy Rate', IDN:'Policy Rate',
+  PHL:'Policy Rate', MYS:'Policy Rate', SGP:'Policy Rate', VNM:'Policy Rate'
 };
 
 // FRED: Monthly CPI inflation (YoY growth rate from OECD)
@@ -221,8 +216,8 @@ const FRED_CPI={
 
 let charts={}, fxHistData=null, selFxCur=['SGD','JPY','AUD','MYR'];
 
-// All FRED data stored globally for time filtering
-let fredIRData=[], fredCPIData=[], wbGDPData=[];
+// All data stored globally for time filtering
+let bisIRData=[], fredCPIData=[], wbGDPData=[];
 
 // Time periods
 const TIME_OPTS=[
@@ -275,7 +270,7 @@ function setTime(tabKey,label,btn){
   btn.classList.add('active');
   // Re-render the relevant chart
   if(tabKey==='fx') renderFxChart();
-  if(tabKey==='ir') renderFredChart('interestRateChart',fredIRData,'ir','interestRateTable',FRED_IR);
+  if(tabKey==='ir') renderBISChart(bisIRData);
   if(tabKey==='inflation') renderFredChart('inflationChart',fredCPIData,'inflation','inflationTable',null);
   if(tabKey==='gdp') renderGDP();
 }
@@ -299,7 +294,7 @@ function setFreq(tabKey,freq,btn){
   btn.parentElement.querySelectorAll('.toggle-btn').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
   if(tabKey==='fx') renderFxChart();
-  if(tabKey==='ir') renderFredChart('interestRateChart',fredIRData,'ir','interestRateTable',FRED_IR);
+  if(tabKey==='ir') renderBISChart(bisIRData);
   if(tabKey==='inflation') renderFredChart('inflationChart',fredCPIData,'inflation','inflationTable',null);
 }
 
@@ -457,7 +452,142 @@ async function fetchFredMulti(seriesMap,key){
   });
 }
 
-// ========== RENDER FRED DATA ==========
+// ========== BIS: CENTRAL BANK POLICY RATES ==========
+async function fetchBISRates(){
+  const bisCodes=Object.keys(BIS_COUNTRIES).join('+');
+  const url=`https://data.bis.org/api/v2/data/dataflow/BIS/WS_CBPOL/1.0/M.${bisCodes}?startPeriod=2010&format=csv&detail=dataonly`;
+  try{
+    const controller=new AbortController();
+    const timeout=setTimeout(()=>controller.abort(),20000);
+    const r=await fetch(url,{signal:controller.signal});
+    clearTimeout(timeout);
+    if(!r.ok){
+      console.warn('BIS HTTP '+r.status);
+      // Fallback: try v1 API
+      return await fetchBISRatesV1();
+    }
+    const text=await r.text();
+    return parseBISCSV(text);
+  }catch(e){
+    console.error('BIS v2 error:',e);
+    // Fallback: try v1 API
+    try{ return await fetchBISRatesV1(); }catch(e2){ console.error('BIS v1 also failed:',e2); return []; }
+  }
+}
+
+async function fetchBISRatesV1(){
+  const bisCodes=Object.keys(BIS_COUNTRIES).join('+');
+  const url=`https://stats.bis.org/api/v1/data/WS_CBPOL/M.${bisCodes}?startPeriod=2010&detail=dataonly`;
+  const r=await fetch(url,{headers:{'Accept':'text/csv'}});
+  if(!r.ok) throw new Error('BIS v1 HTTP '+r.status);
+  const text=await r.text();
+  return parseBISCSV(text);
+}
+
+function parseBISCSV(csvText){
+  const lines=csvText.trim().split('\n');
+  if(lines.length<2) return[];
+
+  // Find column indices from header
+  const headers=lines[0].split(',').map(h=>h.trim().replace(/"/g,''));
+  const refIdx=headers.findIndex(h=>h==='REF_AREA');
+  const timeIdx=headers.findIndex(h=>h==='TIME_PERIOD');
+  const valIdx=headers.findIndex(h=>h==='OBS_VALUE');
+
+  if(refIdx<0||timeIdx<0||valIdx<0){
+    console.warn('BIS CSV: unexpected headers',headers);
+    return[];
+  }
+
+  // Parse rows
+  const byDate={};
+  for(let i=1;i<lines.length;i++){
+    const cols=lines[i].split(',').map(c=>c.trim().replace(/"/g,''));
+    const bisCode=cols[refIdx];
+    const timePeriod=cols[timeIdx]; // e.g. "2024-01"
+    const val=parseFloat(cols[valIdx]);
+
+    if(!bisCode||!timePeriod||isNaN(val)) continue;
+
+    const isoCode=BIS_COUNTRIES[bisCode];
+    if(!isoCode) continue;
+
+    // Normalize date to YYYY-MM-01 format for consistency
+    const date=timePeriod.length===7?timePeriod+'-01':timePeriod;
+
+    if(!byDate[date]) byDate[date]={date};
+    byDate[date][isoCode]=val;
+  }
+
+  return Object.values(byDate).sort((a,b)=>a.date.localeCompare(b.date));
+}
+
+// ========== RENDER BIS DATA ==========
+function renderBISChart(data){
+  const timeKey='ir';
+  const months=getMonths(timeKey);
+  const freq=freqSelections[timeKey]||'monthly';
+  let filtered=filterByTime(data,months);
+
+  if(freq==='yearly') filtered=aggregateToYearly(filtered);
+
+  if(!filtered.length){
+    document.getElementById('interestRateTable').innerHTML='<div class="empty-msg">No BIS data available. <button class="key-btn" style="margin-top:8px" onclick="retryBIS()">Retry</button></div>';
+    return;
+  }
+
+  const isYearly=freq==='yearly';
+  const labels=filtered.map(d=>d.date);
+  const availableCodes=CODES.filter(c=>filtered.some(d=>d[c]!=null));
+
+  const ds=availableCodes.map(code=>({
+    label:`${C[code].flag} ${C[code].name}`,
+    data:filtered.map(d=>d[code]??null),borderColor:CLR[code],backgroundColor:'transparent',
+    borderWidth:2,pointRadius:isYearly?4:0,pointHitRadius:10,tension:0.3,spanGaps:true
+  }));
+
+  if(charts.ir)charts.ir.destroy();
+  const xFmt=isYearly?(v=>v):(v=>{if(!v)return'';const p=v.split('-');return p[1]+'/'+p[0].slice(2);});
+  charts.ir=new Chart(document.getElementById('interestRateChart'),{type:'line',data:{labels,datasets:ds},options:chartOpts(xFmt,v=>v?.toFixed(2)+'%',isYearly?undefined:18)});
+
+  const titleEl=document.getElementById('irTableTitle');
+  if(titleEl) titleEl.textContent=isYearly?'Yearly Averages':'Latest 12 Months';
+
+  // Table
+  const tableSlice=isYearly?filtered.slice(-10):filtered.slice(-12);
+  let h='<table><thead><tr><th>Country</th><th>Type</th>';
+  tableSlice.forEach(d=>{
+    if(isYearly){h+=`<th>${d.date}</th>`;}
+    else{const p=d.date.split('-');h+=`<th>${p[1]}/${p[0].slice(2)}</th>`;}
+  });
+  h+='</tr></thead><tbody>';
+  CODES.forEach(c=>{
+    h+=`<tr><td class="country-cell">${C[c].flag} ${C[c].name}</td>`;
+    h+=`<td><span class="rate-type-label">${BIS_COUNTRY_LABELS[c]||'Policy Rate'}</span></td>`;
+    tableSlice.forEach(d=>{
+      const v=d[c];const cls=v!=null?(v>=0?'positive':'negative'):'';
+      h+=`<td class="${cls}">${v!=null?v.toFixed(2)+'%':'—'}</td>`;
+    });
+    h+='</tr>';
+  });
+  h+='</tbody></table>';
+  document.getElementById('interestRateTable').innerHTML=h;
+
+  // Show which countries have data
+  const missing=CODES.filter(c=>!availableCodes.includes(c));
+  if(missing.length){
+    const names=missing.map(c=>C[c].name).join(', ');
+    document.getElementById('interestRateTable').insertAdjacentHTML('afterend',
+      `<p class="note" style="color:var(--red);margin-top:8px;">No BIS policy rate data for: ${names}</p>`);
+  }
+}
+
+async function retryBIS(){
+  document.getElementById('interestRateTable').innerHTML='<div class="empty-msg"><div class="spinner"></div> Retrying...</div>';
+  const data=await fetchBISRates();
+  bisIRData=data;
+  renderBISChart(data);
+}
 function renderFredChart(canvasId,data,timeKey,tableId,typeMap){
   const months=getMonths(timeKey);
   const freq=freqSelections[timeKey]||'monthly';
@@ -630,17 +760,19 @@ async function loadAllData(){
     document.getElementById('gdpGrowthTable').innerHTML='<div class="empty-msg">World Bank API failed to load. <button class="key-btn" style="margin-top:8px" onclick="retryGDP()">Retry</button></div>';
   }));
 
-  // FRED data (interest rates + inflation)
+  // BIS central bank policy rates (no key needed, no proxy needed)
+  tasks.push(
+    fetchBISRates().then(d=>{
+      bisIRData=d;
+      renderBISChart(d);
+    }).catch(e=>{
+      console.error('BIS IR:',e);
+      document.getElementById('interestRateTable').innerHTML='<div class="empty-msg">BIS API failed. <button class="key-btn" style="margin-top:8px" onclick="retryBIS()">Retry</button></div>';
+    })
+  );
+
+  // FRED data (inflation only — still needs proxy + key)
   if(fredKey){
-    tasks.push(
-      fetchFredMulti(FRED_IR,fredKey).then(d=>{
-        fredIRData=d;
-        renderFredChart('interestRateChart',d,'ir','interestRateTable',FRED_IR);
-      }).catch(e=>{
-        console.error('FRED IR:',e);
-        showError('FRED interest rate fetch failed. Make sure the site is deployed to Netlify/Vercel (FRED requires server-side proxy).');
-      })
-    );
     tasks.push(
       fetchFredMulti(FRED_CPI,fredKey).then(d=>{
         fredCPIData=d;
@@ -650,7 +782,6 @@ async function loadAllData(){
       })
     );
   } else {
-    document.getElementById('interestRateTable').innerHTML='<div class="empty-msg">Add a FRED API key for monthly data.</div>';
     document.getElementById('inflationTable').innerHTML='<div class="empty-msg">Add a FRED API key for monthly inflation data.</div>';
   }
 
