@@ -115,8 +115,8 @@ td.positive{color:var(--green)}td.negative{color:var(--red)}
 
   <nav class="nav" id="mainNav" style="display:none">
     <button class="nav-btn active" onclick="switchTab('fx',this)">FX Rates</button>
-    <button class="nav-btn" onclick="switchTab('inflation',this)">Inflation</button>
     <button class="nav-btn" onclick="switchTab('interestRate',this)">Interest Rate</button>
+    <button class="nav-btn" onclick="switchTab('inflation',this)">Inflation</button>
     <button class="nav-btn" onclick="switchTab('gdpGrowth',this)">GDP Growth</button>
   </nav>
 
@@ -230,7 +230,7 @@ let bisIRData=[], fredCPIData=[], wbGDPData=[];
 const TIME_OPTS=[
   {label:'1Y',months:12},{label:'3Y',months:36},{label:'5Y',months:60},{label:'10Y',months:120},{label:'All',months:9999}
 ];
-let timeSelections={fx:'5Y',inflation:'5Y',ir:'5Y',gdp:'All'};
+let timeSelections={fx:'1Y',inflation:'5Y',ir:'5Y',gdp:'All'};
 
 // Frequency selections
 const FREQ_FX=[{label:'Daily',key:'daily'},{label:'Monthly',key:'monthly'},{label:'Yearly',key:'yearly'}];
@@ -368,16 +368,41 @@ async function fetchLiveFX(key){
 }
 
 async function fetchHistFX(){
-  const end=new Date(),start=new Date();start.setFullYear(start.getFullYear()-10); // fetch 10 years
   const fmt=d=>d.toISOString().split('T')[0];
-  try{
-    const r=await fetch(`https://api.frankfurter.app/${fmt(start)}..${fmt(end)}?from=EUR&to=${FX_CUR.join(',')}`);
-    const d=await r.json(),dates=Object.keys(d.rates).sort(),avail=Object.keys(d.rates[dates[0]]||{});
-    fxHistData={dates,rates:d.rates,avail};
-    buildFxCurrencyToggle(avail);
-    buildTimeToggle('fxTimeToggle','fx');
-    renderFxChart();
-  }catch(e){console.error('Hist FX:',e);}
+  
+  // Try progressively shorter ranges if the API fails
+  const ranges=[5, 3, 1]; // years
+  
+  for(const years of ranges){
+    const end=new Date(), start=new Date();
+    start.setFullYear(start.getFullYear()-years);
+    const url=`https://api.frankfurter.app/${fmt(start)}..${fmt(end)}?from=EUR&to=${FX_CUR.join(',')}`;
+    
+    try{
+      console.log('FX hist: trying',years,'year range');
+      const controller=new AbortController();
+      const timeout=setTimeout(()=>controller.abort(),15000);
+      const r=await fetch(url,{signal:controller.signal});
+      clearTimeout(timeout);
+      
+      if(!r.ok){console.warn('FX hist: HTTP',r.status);continue;}
+      
+      const d=await r.json();
+      if(!d.rates||Object.keys(d.rates).length===0){console.warn('FX hist: empty rates');continue;}
+      
+      const dates=Object.keys(d.rates).sort();
+      const avail=Object.keys(d.rates[dates[0]]||{});
+      console.log('FX hist: got',dates.length,'days,',avail.length,'currencies for',years,'yr range');
+      
+      fxHistData={dates,rates:d.rates,avail};
+      buildFxCurrencyToggle(avail);
+      renderFxChart();
+      return; // success
+    }catch(e){
+      console.warn('FX hist',years+'yr failed:',e.message);
+    }
+  }
+  console.error('FX hist: all ranges failed');
 }
 
 function buildFxCurrencyToggle(avail){
