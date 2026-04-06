@@ -134,7 +134,7 @@ td.positive{color:var(--green)}td.negative{color:var(--red)}
         </div>
       </div>
       <div class="chart-container"><canvas id="fxChart"></canvas></div>
-      <p class="note">Source: ECB via Frankfurter. Some currencies (VND, PHP) may not be available historically.</p>
+      <p class="note">Source: ECB via Frankfurter. VND is not available in ECB historical data. Live VND rate shown in cards above (ExchangeRate-API).</p>
     </div>
   </div>
 
@@ -230,7 +230,7 @@ let bisIRData=[], fredCPIData=[], wbGDPData=[];
 const TIME_OPTS=[
   {label:'1Y',months:12},{label:'3Y',months:36},{label:'5Y',months:60},{label:'10Y',months:120},{label:'All',months:9999}
 ];
-let timeSelections={fx:'1Y',inflation:'5Y',ir:'5Y',gdp:'All'};
+let timeSelections={fx:'All',inflation:'5Y',ir:'5Y',gdp:'All'};
 
 // Frequency selections
 const FREQ_FX=[{label:'Daily',key:'daily'},{label:'Monthly',key:'monthly'},{label:'Yearly',key:'yearly'}];
@@ -368,41 +368,21 @@ async function fetchLiveFX(key){
 }
 
 async function fetchHistFX(){
+  const end=new Date(),start=new Date();
+  start.setFullYear(start.getFullYear()-5);
   const fmt=d=>d.toISOString().split('T')[0];
-  
-  // Try progressively shorter ranges if the API fails
-  const ranges=[5, 3, 1]; // years
-  
-  for(const years of ranges){
-    const end=new Date(), start=new Date();
-    start.setFullYear(start.getFullYear()-years);
-    const url=`https://api.frankfurter.app/${fmt(start)}..${fmt(end)}?from=EUR&to=${FX_CUR.join(',')}`;
-    
-    try{
-      console.log('FX hist: trying',years,'year range');
-      const controller=new AbortController();
-      const timeout=setTimeout(()=>controller.abort(),15000);
-      const r=await fetch(url,{signal:controller.signal});
-      clearTimeout(timeout);
-      
-      if(!r.ok){console.warn('FX hist: HTTP',r.status);continue;}
-      
-      const d=await r.json();
-      if(!d.rates||Object.keys(d.rates).length===0){console.warn('FX hist: empty rates');continue;}
-      
-      const dates=Object.keys(d.rates).sort();
-      const avail=Object.keys(d.rates[dates[0]]||{});
-      console.log('FX hist: got',dates.length,'days,',avail.length,'currencies for',years,'yr range');
-      
-      fxHistData={dates,rates:d.rates,avail};
-      buildFxCurrencyToggle(avail);
-      renderFxChart();
-      return; // success
-    }catch(e){
-      console.warn('FX hist',years+'yr failed:',e.message);
-    }
-  }
-  console.error('FX hist: all ranges failed');
+  try{
+    const r=await fetch(`https://api.frankfurter.app/${fmt(start)}..${fmt(end)}?from=EUR&to=${FX_CUR.join(',')}`);
+    if(!r.ok){console.error('FX hist HTTP',r.status);return;}
+    const d=await r.json();
+    if(!d.rates){console.error('FX hist: no rates');return;}
+    const dates=Object.keys(d.rates).sort();
+    const avail=Object.keys(d.rates[dates[0]]||{});
+    console.log('FX hist:',dates.length,'days,',avail.length,'currencies');
+    fxHistData={dates,rates:d.rates,avail};
+    buildFxCurrencyToggle(avail);
+    renderFxChart();
+  }catch(e){console.error('Hist FX:',e);}
 }
 
 function buildFxCurrencyToggle(avail){
