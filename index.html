@@ -201,9 +201,16 @@ const CODES=Object.keys(C);
 const BIS_COUNTRIES = {
   JP:'JPN', AU:'AUS', KR:'KOR', ID:'IDN', PH:'PHL', MY:'MYS', SG:'SGP', VN:'VNM'
 };
-const BIS_COUNTRY_LABELS = {
-  JPN:'Policy Rate', AUS:'Policy Rate', KOR:'Policy Rate', IDN:'Policy Rate',
-  PHL:'Policy Rate', MYS:'Policy Rate', SGP:'Policy Rate', VNM:'Policy Rate'
+
+// FRED fallback for countries BIS doesn't cover well
+const FRED_IR_FALLBACK = {
+  SGP: { id: 'IR3TIB01SGM156N', type: 'SORA/Interbank 3M' },
+  VNM: { id: 'IR3TIB01VNM156N', type: 'Interbank 3M' },
+};
+
+const IR_LABELS = {
+  JPN:'BOJ Policy Rate', AUS:'RBA Cash Rate', KOR:'BOK Base Rate', IDN:'BI Rate',
+  PHL:'BSP Rate', MYS:'BNM OPR', SGP:'SORA/Interbank 3M', VNM:'Interbank 3M'
 };
 
 // FRED: Monthly CPI inflation (YoY growth rate from OECD)
@@ -455,7 +462,8 @@ async function fetchFredMulti(seriesMap,key){
 // ========== BIS: CENTRAL BANK POLICY RATES ==========
 async function fetchBISRates(){
   const bisCodes=Object.keys(BIS_COUNTRIES).join('+');
-  // Use proxy to avoid CORS. Proxy maps /api/bis/* → stats.bis.org/api/*
+  
+  // Try bulk fetch first
   const urls=[
     `/api/bis/v2/data/dataflow/BIS/WS_CBPOL/1.0/M.${bisCodes}?format=csv&startPeriod=2010`,
     `/api/bis/v1/data/WS_CBPOL/M.${bisCodes}?startPeriod=2010&detail=dataonly`,
@@ -468,29 +476,31 @@ async function fetchBISRates(){
       const timeout=setTimeout(()=>controller.abort(),20000);
       const r=await fetch(url,{signal:controller.signal,headers:{'Accept':'text/csv'}});
       clearTimeout(timeout);
-      if(!r.ok){console.warn('BIS HTTP',r.status,'for',url);continue;}
+      if(!r.ok){console.warn('BIS HTTP',r.status);continue;}
       const text=await r.text();
-      console.log('BIS: received',text.length,'chars');
-      if(text.length<50){console.warn('BIS: response too short');continue;}
+      console.log('BIS: received',text.length,'chars, first 300:',text.substring(0,300));
+      if(text.length<50) continue;
       const data=parseBISCSV(text);
-      if(data.length>0) return data;
-      console.warn('BIS: parsed 0 rows from',url);
-    }catch(e){
-      console.warn('BIS error for',url,':',e.message);
-    }
+      if(data.length>0){
+        // Check which countries we got
+        const got=new Set();
+        data.forEach(row=>CODES.forEach(c=>{if(row[c]!=null)got.add(c);}));
+        console.log('BIS: got data for',Array.from(got).join(', '));
+        return data;
+      }
+    }catch(e){console.warn('BIS error:',e.message);}
   }
 
-  // Last resort: try direct (no proxy) in case CORS is allowed
+  // Try direct (no proxy)
   try{
-    console.log('BIS: trying direct (no proxy)');
-    const bisCodes2=Object.keys(BIS_COUNTRIES).join('+');
-    const r=await fetch(`https://stats.bis.org/api/v2/data/dataflow/BIS/WS_CBPOL/1.0/M.${bisCodes2}?format=csv&startPeriod=2010`,{headers:{'Accept':'text/csv'}});
+    console.log('BIS: trying direct');
+    const r=await fetch(`https://stats.bis.org/api/v2/data/dataflow/BIS/WS_CBPOL/1.0/M.${bisCodes}?format=csv&startPeriod=2010`,{headers:{'Accept':'text/csv'}});
     if(r.ok){
       const text=await r.text();
       const data=parseBISCSV(text);
       if(data.length>0) return data;
     }
-  }catch(e){console.warn('BIS direct also failed:',e.message);}
+  }catch(e){console.warn('BIS direct failed:',e.message);}
 
   return [];
 }
@@ -499,58 +509,66 @@ function parseBISCSV(csvText){
   const lines=csvText.trim().split('\n');
   if(lines.length<2){console.warn('BIS CSV: only',lines.length,'lines');return[];}
 
-  const headers=lines[0].split(',').map(h=>h.trim().replace(/"/g,''));
-  console.log('BIS CSV headers:',headers.slice(0,10).join(' | '));
+  // Parse header - handle quoted fields with commas inside
+  const headers=parseCSVRow(lines[0]);
+  console.log('BIS CSV column count:',headers.length);
+  console.log('BIS CSV headers:',headers.join(' | '));
 
-  // Find exact columns — try common SDMX CSV column names
+  // Find columns by exact or fuzzy match
   let refIdx=-1, timeIdx=-1, valIdx=-1;
   
-  // Try exact matches first, then fuzzy
-  const refNames=['REF_AREA','REFERENCE_AREA','Reference area'];
-  const timeNames=['TIME_PERIOD','Time period','TIME'];
-  const valNames=['OBS_VALUE','Observation value','OBS'];
-  
-  for(const name of refNames){ const i=headers.indexOf(name); if(i>=0){refIdx=i;break;} }
-  for(const name of timeNames){ const i=headers.indexOf(name); if(i>=0){timeIdx=i;break;} }
-  for(const name of valNames){ const i=headers.indexOf(name); if(i>=0){valIdx=i;break;} }
-  
-  // Fuzzy fallback
-  if(refIdx<0) refIdx=headers.findIndex(h=>/^ref.*area$/i.test(h.trim()));
-  if(timeIdx<0) timeIdx=headers.findIndex(h=>/^time.*period$/i.test(h.trim()));
-  if(valIdx<0) valIdx=headers.findIndex(h=>/^obs.*val/i.test(h.trim()));
+  for(let i=0;i<headers.length;i++){
+    const h=headers[i].toUpperCase().trim();
+    if(refIdx<0 && (h==='REF_AREA'||h==='REFERENCE_AREA'||h==='REFERENCE AREA')) refIdx=i;
+    if(timeIdx<0 && (h==='TIME_PERIOD'||h==='TIME PERIOD')) timeIdx=i;
+    if(valIdx<0 && (h==='OBS_VALUE'||h==='OBSERVATION VALUE'||h==='OBS VALUE')) valIdx=i;
+  }
 
   if(refIdx<0||timeIdx<0||valIdx<0){
-    console.warn('BIS CSV: columns not found. ref=',refIdx,'time=',timeIdx,'val=',valIdx);
-    console.warn('BIS CSV all headers:',JSON.stringify(headers));
+    console.warn('BIS CSV: columns not found. Trying position-based fallback.');
+    // Log all headers for debugging
+    headers.forEach((h,i)=>console.log('  col',i,':',h));
+    
+    // BIS v1 CSV sometimes has a simpler format - try to detect
+    // Look for a column that has 2-letter country codes
+    for(let i=0;i<headers.length;i++){
+      const h=headers[i].toUpperCase().trim();
+      if(h.includes('REF') && h.includes('AREA')) refIdx=i;
+      if(h.includes('TIME') && h.includes('PERIOD')) timeIdx=i;
+      if(h.includes('OBS') && h.includes('VAL')) valIdx=i;
+    }
+  }
+
+  if(refIdx<0||timeIdx<0||valIdx<0){
+    console.error('BIS CSV: still cannot find columns after fallback');
     return[];
   }
   
-  console.log('BIS CSV: using columns ref='+refIdx+'('+headers[refIdx]+') time='+timeIdx+'('+headers[timeIdx]+') val='+valIdx+'('+headers[valIdx]+')');
+  console.log('BIS CSV: ref=col'+refIdx+' time=col'+timeIdx+' val=col'+valIdx);
 
   const byDate={};
   let rowCount=0, skipped=0;
   for(let i=1;i<lines.length;i++){
     if(!lines[i].trim()) continue;
-    // Handle quoted CSV fields properly
-    const cols=lines[i].split(',').map(c=>c.trim().replace(/"/g,''));
-    const bisCode=cols[refIdx];
-    const timePeriod=cols[timeIdx];
-    const val=parseFloat(cols[valIdx]);
+    const cols=parseCSVRow(lines[i]);
+    if(cols.length<=Math.max(refIdx,timeIdx,valIdx)){skipped++;continue;}
+    
+    const bisCode=cols[refIdx].trim();
+    const timePeriod=cols[timeIdx].trim();
+    const valStr=cols[valIdx].trim();
+    const val=parseFloat(valStr);
 
-    if(!bisCode||!timePeriod||isNaN(val)){skipped++;continue;}
+    // Validate time period: must be YYYY-MM format
+    if(!/^\d{4}-\d{2}$/.test(timePeriod)){skipped++;continue;}
+    // Validate value: interest rate between -2 and 50
+    if(isNaN(val)||val>50||val<-2){skipped++;continue;}
+    // Validate country code: must be 2 letters
+    if(!/^[A-Z]{2}$/.test(bisCode)){skipped++;continue;}
 
-    // Validate: time period must match YYYY-MM or YYYY-MM-DD format
-    if(!/^\d{4}-\d{2}/.test(timePeriod)){skipped++;continue;}
-
-    // Validate: interest rate should be between -5 and 100 (not a year like 2026)
-    if(val>100||val<-5){skipped++;continue;}
-
-    // Map 2-letter BIS code to our 3-letter code
     const isoCode=BIS_COUNTRIES[bisCode];
     if(!isoCode) continue;
 
-    const date=timePeriod.slice(0,7)+'-01';
-
+    const date=timePeriod+'-01';
     if(!byDate[date]) byDate[date]={date};
     byDate[date][isoCode]=val;
     rowCount++;
@@ -558,6 +576,73 @@ function parseBISCSV(csvText){
 
   console.log('BIS CSV: parsed',rowCount,'valid rows, skipped',skipped);
   return Object.values(byDate).sort((a,b)=>a.date.localeCompare(b.date));
+}
+
+// Proper CSV row parser that handles quoted fields with commas
+function parseCSVRow(line){
+  const result=[];
+  let current='', inQuotes=false;
+  for(let i=0;i<line.length;i++){
+    const ch=line[i];
+    if(inQuotes){
+      if(ch==='"'){
+        if(i+1<line.length && line[i+1]==='"'){current+='"';i++;}
+        else inQuotes=false;
+      } else current+=ch;
+    } else {
+      if(ch==='"') inQuotes=true;
+      else if(ch===','){result.push(current);current='';}
+      else current+=ch;
+    }
+  }
+  result.push(current);
+  return result;
+}
+
+// ========== FRED FALLBACK FOR SG/VN ==========
+async function fetchFredFallbackRates(fredKey){
+  if(!fredKey) return {};
+  const results={};
+  for(const [code,info] of Object.entries(FRED_IR_FALLBACK)){
+    try{
+      const data=await fredFetch(info.id,fredKey);
+      if(data.length>0) results[code]=data;
+      console.log('FRED fallback',code,':',data.length,'points');
+    }catch(e){console.warn('FRED fallback',code,'failed:',e.message);}
+  }
+  return results;
+}
+
+// Merge FRED fallback data into BIS data
+function mergeFredIntoBIS(bisData,fredResults){
+  // Build a map of all dates
+  const allDates=new Set(bisData.map(d=>d.date));
+  
+  for(const [code,fredPoints] of Object.entries(fredResults)){
+    fredPoints.forEach(fp=>{
+      // Normalize FRED date (YYYY-MM-DD) to match BIS (YYYY-MM-01)
+      const date=fp.date.slice(0,7)+'-01';
+      allDates.add(date);
+    });
+  }
+
+  const sorted=[...allDates].sort();
+  const merged=sorted.map(date=>{
+    // Start with BIS data if exists
+    const existing=bisData.find(d=>d.date===date)||{date};
+    const row={...existing};
+    
+    // Fill in FRED data only for countries that are missing in BIS
+    for(const [code,fredPoints] of Object.entries(fredResults)){
+      if(row[code]==null){
+        const match=fredPoints.find(fp=>fp.date.slice(0,7)===date.slice(0,7));
+        if(match) row[code]=match.value;
+      }
+    }
+    return row;
+  });
+
+  return merged;
 }
 
 // ========== RENDER BIS DATA ==========
@@ -601,7 +686,7 @@ function renderBISChart(data){
   h+='</tr></thead><tbody>';
   CODES.forEach(c=>{
     h+=`<tr><td class="country-cell">${C[c].flag} ${C[c].name}</td>`;
-    h+=`<td><span class="rate-type-label">${BIS_COUNTRY_LABELS[c]||'Policy Rate'}</span></td>`;
+    h+=`<td><span class="rate-type-label">${IR_LABELS[c]||'Policy Rate'}</span></td>`;
     tableSlice.forEach(d=>{
       const v=d[c];const cls=v!=null?(v>=0?'positive':'negative'):'';
       h+=`<td class="${cls}">${v!=null?v.toFixed(2)+'%':'—'}</td>`;
@@ -622,9 +707,26 @@ function renderBISChart(data){
 
 async function retryBIS(){
   document.getElementById('interestRateTable').innerHTML='<div class="empty-msg"><div class="spinner"></div> Retrying...</div>';
-  const data=await fetchBISRates();
-  bisIRData=data;
-  renderBISChart(data);
+  try{
+    let data=await fetchBISRates();
+    
+    // Try FRED fallback for missing countries
+    const fredKey=HARDCODED_FRED_KEY||localStorage.getItem('fred_api_key')||'';
+    if(fredKey){
+      const got=new Set();
+      data.forEach(row=>CODES.forEach(c=>{if(row[c]!=null)got.add(c);}));
+      const missing=CODES.filter(c=>!got.has(c));
+      if(missing.some(c=>FRED_IR_FALLBACK[c])){
+        const fredResults=await fetchFredFallbackRates(fredKey);
+        if(Object.keys(fredResults).length>0) data=mergeFredIntoBIS(data,fredResults);
+      }
+    }
+    
+    bisIRData=data;
+    renderBISChart(data);
+  }catch(e){
+    document.getElementById('interestRateTable').innerHTML='<div class="empty-msg">Failed again. Check console. <button class="key-btn" style="margin-top:8px" onclick="retryBIS()">Retry</button></div>';
+  }
 }
 function renderFredChart(canvasId,data,timeKey,tableId,typeMap){
   const months=getMonths(timeKey);
@@ -798,15 +900,36 @@ async function loadAllData(){
     document.getElementById('gdpGrowthTable').innerHTML='<div class="empty-msg">World Bank API failed to load. <button class="key-btn" style="margin-top:8px" onclick="retryGDP()">Retry</button></div>';
   }));
 
-  // BIS central bank policy rates (no key needed, no proxy needed)
+  // BIS central bank policy rates + FRED fallback for SG/VN
   tasks.push(
-    fetchBISRates().then(d=>{
-      bisIRData=d;
-      renderBISChart(d);
-    }).catch(e=>{
-      console.error('BIS IR:',e);
-      document.getElementById('interestRateTable').innerHTML='<div class="empty-msg">BIS API failed to load. Make sure the site is deployed to Netlify/Vercel. Open console (F12) for details. <button class="key-btn" style="margin-top:8px" onclick="retryBIS()">Retry</button></div>';
-    })
+    (async()=>{
+      try{
+        let data=await fetchBISRates();
+        console.log('BIS: initial data has',data.length,'rows');
+        
+        // Check which countries are missing from BIS
+        const got=new Set();
+        data.forEach(row=>CODES.forEach(c=>{if(row[c]!=null)got.add(c);}));
+        const missing=CODES.filter(c=>!got.has(c));
+        console.log('BIS: missing countries:',missing.join(', ')||'none');
+        
+        // Fetch FRED fallback for SG and VN if missing
+        if(fredKey && missing.some(c=>FRED_IR_FALLBACK[c])){
+          console.log('Fetching FRED fallback for missing countries...');
+          const fredResults=await fetchFredFallbackRates(fredKey);
+          if(Object.keys(fredResults).length>0){
+            data=mergeFredIntoBIS(data,fredResults);
+            console.log('Merged FRED fallback, now',data.length,'rows');
+          }
+        }
+        
+        bisIRData=data;
+        renderBISChart(data);
+      }catch(e){
+        console.error('Interest rate fetch error:',e);
+        document.getElementById('interestRateTable').innerHTML='<div class="empty-msg">Interest rate data failed to load. Open console (F12) for details. <button class="key-btn" style="margin-top:8px" onclick="retryBIS()">Retry</button></div>';
+      }
+    })()
   );
 
   // FRED data (inflation only — still needs proxy + key)
