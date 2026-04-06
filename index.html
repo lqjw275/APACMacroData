@@ -372,7 +372,7 @@ async function fetchHistFX(){
   start.setFullYear(start.getFullYear()-5);
   const fmt=d=>d.toISOString().split('T')[0];
   try{
-    const r=await fetch(`https://api.frankfurter.app/${fmt(start)}..${fmt(end)}?from=EUR&to=${FX_CUR.join(',')}`);
+    const r=await fetch(`/api/fx/${fmt(start)}..${fmt(end)}?from=EUR&to=${FX_CUR.join(',')}`);
     if(!r.ok){console.error('FX hist HTTP',r.status);return;}
     const d=await r.json();
     if(!d.rates){console.error('FX hist: no rates');return;}

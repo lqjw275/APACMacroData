@@ -3,6 +3,7 @@
   "outputDirectory": ".",
   "rewrites": [
     { "source": "/api/fred/:path*", "destination": "https://api.stlouisfed.org/fred/:path*" },
-    { "source": "/api/bis/:path*", "destination": "https://stats.bis.org/api/:path*" }
+    { "source": "/api/bis/:path*", "destination": "https://stats.bis.org/api/:path*" },
+    { "source": "/api/fx/:path*", "destination": "https://api.frankfurter.app/:path*" }
   ]
 }
