@@ -995,18 +995,38 @@ function toggleDrawMode(){
   }
 }
 
-function getChartPixelFromEvent(e){
+function getChartDataFromEvent(e){
+  const chart=charts.fx;
+  if(!chart) return null;
+  
   const canvas=document.getElementById('fxChart');
   const rect=canvas.getBoundingClientRect();
-  // Scale for device pixel ratio
-  const scaleX=canvas.width/rect.width;
-  const scaleY=canvas.height/rect.height;
+  
+  // Get pixel position relative to canvas (accounting for device pixel ratio)
+  const cssX=e.clientX-rect.left;
+  const cssY=e.clientY-rect.top;
+  const pixelX=cssX*(canvas.width/rect.width);
+  const pixelY=cssY*(canvas.height/rect.height);
+  
+  // Convert pixel to chart data values
+  const xScale=chart.scales.x;
+  const yScale=chart.scales.y;
+  
+  const xVal=xScale.getValueForPixel(pixelX);
+  const yVal=yScale.getValueForPixel(pixelY);
+  
+  // Get nearest date label
+  const labels=chart.data.labels;
+  const idx=Math.round(xVal);
+  const dateLabel=labels[Math.max(0,Math.min(idx,labels.length-1))]||'';
+  
   return {
-    x:(e.clientX-rect.left)*scaleX,
-    y:(e.clientY-rect.top)*scaleY,
-    // Also store as percentage of canvas for resize resilience
-    pctX:(e.clientX-rect.left)/rect.width,
-    pctY:(e.clientY-rect.top)/rect.height
+    pixelX, pixelY,
+    pctX: cssX/rect.width,
+    pctY: cssY/rect.height,
+    value: yVal,
+    date: dateLabel,
+    xIdx: idx
   };
 }
 
@@ -1017,23 +1037,34 @@ document.addEventListener('DOMContentLoaded',()=>{
   
   overlay.addEventListener('click',(e)=>{
     if(!drawMode) return;
-    const pt=getChartPixelFromEvent(e);
+    const pt=getChartDataFromEvent(e);
+    if(!pt) return;
     const hint=document.getElementById('drawHint');
     
     if(!drawStart){
       drawStart=pt;
-      hint.textContent='Click end point...';
+      hint.textContent=`Start: ${pt.value.toFixed(4)} (${pt.date}) — click end point...`;
       // Draw temporary dot
       redrawOverlay();
       const ctx=overlay.getContext('2d');
       ctx.fillStyle='#60a5fa';
       ctx.beginPath();
-      ctx.arc(pt.pctX*overlay.width, pt.pctY*overlay.height, 4, 0, Math.PI*2);
+      ctx.arc(pt.pctX*overlay.width, pt.pctY*overlay.height, 5, 0, Math.PI*2);
       ctx.fill();
     } else {
+      // Calculate % change
+      const startVal=drawStart.value;
+      const endVal=pt.value;
+      const pctChange=((endVal-startVal)/startVal)*100;
+      const absChange=endVal-startVal;
+      
       drawnLines.push({
         x1:drawStart.pctX, y1:drawStart.pctY,
-        x2:pt.pctX, y2:pt.pctY
+        x2:pt.pctX, y2:pt.pctY,
+        startVal, endVal,
+        startDate:drawStart.date,
+        endDate:pt.date,
+        pctChange, absChange
       });
       drawStart=null;
       hint.textContent='Click start point on chart...';
@@ -1063,25 +1094,79 @@ function redrawOverlay(){
   ctx.clearRect(0,0,overlay.width,overlay.height);
   
   drawnLines.forEach(line=>{
+    const x1=line.x1*overlay.width, y1=line.y1*overlay.height;
+    const x2=line.x2*overlay.width, y2=line.y2*overlay.height;
+    
+    // Draw line
     ctx.beginPath();
-    ctx.moveTo(line.x1*overlay.width, line.y1*overlay.height);
-    ctx.lineTo(line.x2*overlay.width, line.y2*overlay.height);
-    ctx.strokeStyle='#60a5fa';
+    ctx.moveTo(x1,y1);
+    ctx.lineTo(x2,y2);
+    const isPositive=line.pctChange>=0;
+    const lineColor=isPositive?'#34d399':'#f87171';
+    ctx.strokeStyle=lineColor;
     ctx.lineWidth=2;
     ctx.setLineDash([6,4]);
     ctx.stroke();
     ctx.setLineDash([]);
     
     // Draw endpoints
-    [
-      [line.x1*overlay.width, line.y1*overlay.height],
-      [line.x2*overlay.width, line.y2*overlay.height]
-    ].forEach(([x,y])=>{
-      ctx.fillStyle='#60a5fa';
+    [[x1,y1],[x2,y2]].forEach(([x,y])=>{
+      ctx.fillStyle=lineColor;
       ctx.beginPath();
-      ctx.arc(x,y,3,0,Math.PI*2);
+      ctx.arc(x,y,4,0,Math.PI*2);
       ctx.fill();
     });
+    
+    // Draw label at midpoint
+    const midX=(x1+x2)/2;
+    const midY=(y1+y2)/2;
+    const sign=isPositive?'+':'';
+    const labelText=`${sign}${line.pctChange.toFixed(2)}%`;
+    const subText=`${line.startVal.toFixed(4)} → ${line.endVal.toFixed(4)}`;
+    const dateText=`${line.startDate} → ${line.endDate}`;
+    
+    // Label background
+    ctx.font='bold 13px "JetBrains Mono", monospace';
+    const mainW=ctx.measureText(labelText).width;
+    ctx.font='10px "DM Sans", sans-serif';
+    const subW=Math.max(ctx.measureText(subText).width, ctx.measureText(dateText).width);
+    const boxW=Math.max(mainW,subW)+16;
+    const boxH=52;
+    const boxX=midX-boxW/2;
+    const boxY=midY-boxH-8;
+    
+    // Shadow
+    ctx.shadowColor='rgba(0,0,0,0.5)';
+    ctx.shadowBlur=8;
+    ctx.fillStyle='#111827';
+    ctx.beginPath();
+    ctx.roundRect(boxX,boxY,boxW,boxH,6);
+    ctx.fill();
+    ctx.shadowBlur=0;
+    
+    // Border
+    ctx.strokeStyle=lineColor;
+    ctx.lineWidth=1;
+    ctx.beginPath();
+    ctx.roundRect(boxX,boxY,boxW,boxH,6);
+    ctx.stroke();
+    
+    // % change text
+    ctx.fillStyle=lineColor;
+    ctx.font='bold 13px "JetBrains Mono", monospace';
+    ctx.textAlign='center';
+    ctx.fillText(labelText, midX, boxY+18);
+    
+    // Value range
+    ctx.fillStyle='#8896ab';
+    ctx.font='10px "DM Sans", sans-serif';
+    ctx.fillText(subText, midX, boxY+32);
+    
+    // Date range
+    ctx.fillStyle='#5a6a80';
+    ctx.fillText(dateText, midX, boxY+44);
+    
+    ctx.textAlign='left';
   });
 }
 
