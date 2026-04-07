@@ -192,7 +192,12 @@ const C = {
   VNM:{name:'Vietnam',currency:'VND',flag:'🇻🇳'},MYS:{name:'Malaysia',currency:'MYR',flag:'🇲🇾'},
 };
 const CLR={SGP:'#e74c3c',JPN:'#3498db',AUS:'#2ecc71',KOR:'#9b59b6',IDN:'#f39c12',PHL:'#1abc9c',VNM:'#e67e22',MYS:'#34495e'};
-const FX_CUR=['SGD','JPY','AUD','KRW','IDR','PHP','VND','MYR'];
+const FX_CUR=['USD','SGD','JPY','AUD','KRW','IDR','PHP','VND','MYR'];
+// Extra FX currencies not in the main country map
+const FX_EXTRA={USD:{name:'United States',currency:'USD',flag:'🇺🇸',code:'USD'}};
+function fxInfo(currency){return Object.values(C).find(v=>v.currency===currency)||FX_EXTRA[currency]||null;}
+function fxCode(currency){const e=Object.entries(C).find(([,v])=>v.currency===currency);return e?e[0]:currency;}
+const FX_CLR={USD:'#6366f1',...CLR};
 const WB='SGP;JPN;AUS;KOR;IDN;PHL;VNM;MYS';
 const CODES=Object.keys(C);
 
@@ -221,7 +226,7 @@ const FRED_CPI={
   PHL:'CPALTT01PHM659N',VNM:'CPALTT01VNM659N',MYS:'CPALTT01MYM659N',
 };
 
-let charts={}, fxHistData=null, selFxCur=['SGD','JPY','AUD','MYR'];
+let charts={}, fxHistData=null, selFxCur=['USD','SGD','JPY','AUD','MYR'];
 
 // All data stored globally for time filtering
 let bisIRData=[], fredCPIData=[], wbGDPData=[];
@@ -360,7 +365,7 @@ async function fetchLiveFX(key){
     document.getElementById('lastUpdate').textContent='FX: '+new Date(d.time_last_update_utc).toLocaleDateString('en-SG',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
     let h='';
     FX_CUR.forEach(c=>{
-      const rate=d.conversion_rates[c],co=Object.values(C).find(v=>v.currency===c);
+      const rate=d.conversion_rates[c],co=fxInfo(c);
       if(rate&&co)h+=`<div class="fx-card"><div class="fx-card-header"><span class="fx-flag">${co.flag}</span><span class="fx-currency">EUR/${c}</span></div><div class="fx-rate">${rate.toFixed(4)}</div><div class="fx-country">${co.name}</div></div>`;
     });
     document.getElementById('fxCards').innerHTML=h;
@@ -387,7 +392,7 @@ async function fetchHistFX(){
 
 function buildFxCurrencyToggle(avail){
   let h='';FX_CUR.forEach(c=>{
-    const co=Object.values(C).find(v=>v.currency===c),ok=avail.includes(c),on=selFxCur.includes(c)&&ok;
+    const co=fxInfo(c),ok=avail.includes(c),on=selFxCur.includes(c)&&ok;
     h+=`<button class="toggle-btn ${on?'active':''}" ${ok?'':'disabled style="opacity:0.3"'} onclick="toggleFxCur('${c}',this)">${co?.flag||''} ${c}</button>`;
   });document.getElementById('fxToggle').innerHTML=h;
 }
@@ -418,8 +423,8 @@ function renderFxChart(){
   }
 
   const ds=active.map(cur=>{
-    const ce=Object.entries(C).find(([,v])=>v.currency===cur),code=ce?ce[0]:cur;
-    return{label:`${C[code]?.flag||''} ${cur}`,data:chartRatesArr.map(r=>r[cur]??null),borderColor:CLR[code]||'#999',backgroundColor:'transparent',borderWidth:2,pointRadius:freq==='yearly'?4:0,pointHitRadius:10,tension:0.3,spanGaps:true};
+    const code=fxCode(cur),co=fxInfo(cur);
+    return{label:`${co?.flag||''} ${cur}`,data:chartRatesArr.map(r=>r[cur]??null),borderColor:FX_CLR[code]||CLR[code]||'#999',backgroundColor:'transparent',borderWidth:2,pointRadius:freq==='yearly'?4:0,pointHitRadius:10,tension:0.3,spanGaps:true};
   });
   if(charts.fx)charts.fx.destroy();
   const xFmt=freq==='daily'?(v=>{const d=new Date(v);return d.getDate()+'/'+(d.getMonth()+1);}):
