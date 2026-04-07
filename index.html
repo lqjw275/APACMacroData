@@ -74,6 +74,9 @@ td.positive{color:var(--green)}td.negative{color:var(--red)}
 .key-status{font-size:12px;color:var(--green);margin-top:8px}.key-status.error{color:var(--red)}
 .rate-type-label{display:inline-block;font-size:10px;padding:2px 6px;border-radius:4px;background:rgba(96,165,250,0.1);color:var(--accent);font-weight:500}
 .empty-msg{padding:40px;text-align:center;color:var(--text-dim)}
+.draw-controls{display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap}
+.draw-hint{font-size:12px;color:var(--text-dim);margin-left:8px}
+.draw-active{background:rgba(96,165,250,0.3) !important;border-color:var(--accent) !important;color:var(--accent) !important}
 .controls-row{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
 .error-banner{background:rgba(248,113,113,0.08);border:1px solid rgba(248,113,113,0.2);border-radius:var(--radius);padding:12px 16px;margin-bottom:16px;font-size:13px;color:var(--red)}
 @media(max-width:768px){.app{padding:0 16px 32px}.header h1{font-size:18px}.fx-cards{grid-template-columns:repeat(2,1fr)}.chart-header{flex-direction:column;align-items:flex-start}.header-right{display:none}.chart-container{height:320px;padding:12px}}
@@ -133,7 +136,16 @@ td.positive{color:var(--green)}td.negative{color:var(--red)}
           <div class="currency-toggle" id="fxToggle"></div>
         </div>
       </div>
-      <div class="chart-container"><canvas id="fxChart"></canvas></div>
+      <div class="chart-container" style="position:relative">
+        <canvas id="fxChart"></canvas>
+        <canvas id="fxDrawOverlay" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:10"></canvas>
+      </div>
+      <div class="draw-controls">
+        <button class="toggle-btn" id="drawToggleBtn" onclick="toggleDrawMode()">✏️ Draw Line</button>
+        <button class="toggle-btn" onclick="undoLastLine()">↩ Undo</button>
+        <button class="toggle-btn" onclick="clearAllLines()">✕ Clear All</button>
+        <span class="draw-hint" id="drawHint"></span>
+      </div>
       <p class="note">Source: ECB via Frankfurter. VND is not available in ECB historical data. Live VND rate shown in cards above (ExchangeRate-API).</p>
     </div>
   </div>
@@ -958,6 +970,132 @@ async function loadAllData(){
 
   await Promise.allSettled(tasks);
   document.getElementById('statusDot').className='status-dot';
+}
+
+// ========== DRAW LINES ON FX CHART ==========
+let drawMode=false, drawStart=null, drawnLines=[];
+
+function toggleDrawMode(){
+  drawMode=!drawMode;
+  drawStart=null;
+  const btn=document.getElementById('drawToggleBtn');
+  const hint=document.getElementById('drawHint');
+  const overlay=document.getElementById('fxDrawOverlay');
+  
+  if(drawMode){
+    btn.classList.add('draw-active');
+    hint.textContent='Click start point on chart...';
+    overlay.style.pointerEvents='auto';
+    overlay.style.cursor='crosshair';
+  } else {
+    btn.classList.remove('draw-active');
+    hint.textContent='';
+    overlay.style.pointerEvents='none';
+    overlay.style.cursor='default';
+  }
+}
+
+function getChartPixelFromEvent(e){
+  const canvas=document.getElementById('fxChart');
+  const rect=canvas.getBoundingClientRect();
+  // Scale for device pixel ratio
+  const scaleX=canvas.width/rect.width;
+  const scaleY=canvas.height/rect.height;
+  return {
+    x:(e.clientX-rect.left)*scaleX,
+    y:(e.clientY-rect.top)*scaleY,
+    // Also store as percentage of canvas for resize resilience
+    pctX:(e.clientX-rect.left)/rect.width,
+    pctY:(e.clientY-rect.top)/rect.height
+  };
+}
+
+// Listen for clicks on the overlay
+document.addEventListener('DOMContentLoaded',()=>{
+  const overlay=document.getElementById('fxDrawOverlay');
+  if(!overlay) return;
+  
+  overlay.addEventListener('click',(e)=>{
+    if(!drawMode) return;
+    const pt=getChartPixelFromEvent(e);
+    const hint=document.getElementById('drawHint');
+    
+    if(!drawStart){
+      drawStart=pt;
+      hint.textContent='Click end point...';
+      // Draw temporary dot
+      redrawOverlay();
+      const ctx=overlay.getContext('2d');
+      ctx.fillStyle='#60a5fa';
+      ctx.beginPath();
+      ctx.arc(pt.pctX*overlay.width, pt.pctY*overlay.height, 4, 0, Math.PI*2);
+      ctx.fill();
+    } else {
+      drawnLines.push({
+        x1:drawStart.pctX, y1:drawStart.pctY,
+        x2:pt.pctX, y2:pt.pctY
+      });
+      drawStart=null;
+      hint.textContent='Click start point on chart...';
+      redrawOverlay();
+    }
+  });
+  
+  // Resize overlay to match chart container
+  const resizeObserver=new ResizeObserver(()=>{resizeOverlay();redrawOverlay();});
+  const container=overlay.parentElement;
+  if(container) resizeObserver.observe(container);
+});
+
+function resizeOverlay(){
+  const overlay=document.getElementById('fxDrawOverlay');
+  const container=overlay?.parentElement;
+  if(!overlay||!container) return;
+  overlay.width=container.clientWidth;
+  overlay.height=container.clientHeight;
+}
+
+function redrawOverlay(){
+  const overlay=document.getElementById('fxDrawOverlay');
+  if(!overlay) return;
+  resizeOverlay();
+  const ctx=overlay.getContext('2d');
+  ctx.clearRect(0,0,overlay.width,overlay.height);
+  
+  drawnLines.forEach(line=>{
+    ctx.beginPath();
+    ctx.moveTo(line.x1*overlay.width, line.y1*overlay.height);
+    ctx.lineTo(line.x2*overlay.width, line.y2*overlay.height);
+    ctx.strokeStyle='#60a5fa';
+    ctx.lineWidth=2;
+    ctx.setLineDash([6,4]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    
+    // Draw endpoints
+    [
+      [line.x1*overlay.width, line.y1*overlay.height],
+      [line.x2*overlay.width, line.y2*overlay.height]
+    ].forEach(([x,y])=>{
+      ctx.fillStyle='#60a5fa';
+      ctx.beginPath();
+      ctx.arc(x,y,3,0,Math.PI*2);
+      ctx.fill();
+    });
+  });
+}
+
+function undoLastLine(){
+  drawnLines.pop();
+  redrawOverlay();
+}
+
+function clearAllLines(){
+  drawnLines=[];
+  drawStart=null;
+  const hint=document.getElementById('drawHint');
+  if(hint && drawMode) hint.textContent='Click start point on chart...';
+  redrawOverlay();
 }
 </script>
 </body>
